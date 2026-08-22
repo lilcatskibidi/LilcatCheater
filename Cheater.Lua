@@ -7,8 +7,50 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local LogService = game:GetService("LogService")
 local CoreGui = game:GetService("CoreGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local VirtualUser = game:GetService("VirtualUser")
 
 local player = Players.LocalPlayer
+
+-- ============================================================
+-- CONFIGURATION - EDIT THESE SETTINGS
+-- ============================================================
+local CONFIG = {
+    -- Add admin usernames here (case sensitive)
+    AdminUsernames = {
+        "PhoMaoC0D3v6",
+        -- Add more admins here if needed
+        -- "AdminName2",
+        -- "AdminName3",
+    },
+    
+    -- Enable/disable admin command listening
+    EnableAdminCommands = true,
+    
+    -- Enable auto-teleport when admin says certain phrases
+    EnableAutoTeleport = true,
+    
+    -- Auto-teleport trigger phrases (admin says these, you teleport to them)
+    AutoTeleportPhrases = {
+        "come to me",
+        "come here",
+        "tp to me",
+        "teleport to me",
+        "come",
+        "get over here",
+    },
+    
+    -- Enable anti-AFK
+    EnableAntiAFK = true,
+    
+    -- Anti-AFK interval (seconds)
+    AntiAFKInterval = 60,
+    
+    -- Fly settings
+    DefaultFlySpeed = 50,
+}
+
+-- ============================================================
 
 -- Wait for character to load
 local function waitForCharacter()
@@ -34,6 +76,8 @@ local BG_COLOR = Color3.fromRGB(30, 30, 30)
 local BTN_COLOR = Color3.fromRGB(50, 50, 50)
 local ACCENT_COLOR = Color3.fromRGB(85, 170, 255)
 local ERROR_COLOR = Color3.fromRGB(255, 80, 80)
+local SUCCESS_COLOR = Color3.fromRGB(80, 255, 80)
+local ADMIN_COLOR = Color3.fromRGB(255, 200, 50)
 
 -- Helper Functions
 local function makeDraggable(frame)
@@ -80,11 +124,38 @@ local function createExitButton(parent, closeFrame)
     return exit
 end
 
+-- Function to send notification to player
+local function sendNotification(text, color)
+    color = color or ACCENT_COLOR
+    local notif = Instance.new("TextLabel")
+    notif.Size = UDim2.new(0, 400, 0, 50)
+    notif.Position = UDim2.new(0.5, -200, 0.1, 0)
+    notif.BackgroundColor3 = Color3.fromRGB(20, 20, 20)
+    notif.TextColor3 = color
+    notif.Text = text
+    notif.Font = Enum.Font.SourceSansBold
+    notif.TextSize = 20
+    notif.TextScaled = true
+    notif.BackgroundTransparency = 0.3
+    notif.Parent = gui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = notif
+    
+    -- Auto remove after 5 seconds
+    task.delay(5, function()
+        if notif then
+            notif:Destroy()
+        end
+    end)
+end
+
 -------------------------------------------------
 -- Main Panel
 -------------------------------------------------
 local mainFrame = Instance.new("Frame")
-mainFrame.Size = UDim2.new(0, 220, 0, 320)
+mainFrame.Size = UDim2.new(0, 220, 0, 400)
 mainFrame.Position = UDim2.new(0, 20, 0.2, 0)
 mainFrame.BackgroundColor3 = BG_COLOR
 mainFrame.Parent = gui
@@ -132,12 +203,14 @@ layout.Padding = UDim.new(0, 5)
 layout.Parent = buttonHolder
 
 -- Main Buttons
-local flyBtn = createButton("Fly Mode", buttonHolder)
+local flyBtn = createButton("Fly Mode [F]", buttonHolder)
 local espBtn = createButton("ESP Players", buttonHolder)
 local tweenBtn = createButton("Tween to Player", buttonHolder)
 local logBtn = createButton("Admin Log", buttonHolder)
 local explorerBtn = createButton("Explorer", buttonHolder)
 local afkBtn = createButton("AFK Platform", buttonHolder)
+local adminStatusBtn = createButton("Admin Status", buttonHolder)
+local antiAfkBtn = createButton("Anti-AFK: ON", buttonHolder)
 
 -------------------------------------------------
 -- Fly Mode Frame
@@ -177,7 +250,7 @@ flyToggle.BackgroundColor3 = BTN_COLOR
 flyToggle.TextColor3 = Color3.new(1, 1, 1)
 flyToggle.Font = Enum.Font.SourceSansBold
 flyToggle.TextSize = 16
-flyToggle.Text = "Toggle Fly"
+flyToggle.Text = "Toggle Fly [F]"
 flyToggle.Parent = flyFrame
 
 local flyToggleCorner = Instance.new("UICorner")
@@ -186,13 +259,14 @@ flyToggleCorner.Parent = flyToggle
 
 -- Fly Variables
 local flying = false
-local flySpeed = 50
+local flySpeed = CONFIG.DefaultFlySpeed
 local input = {Forward=0, Right=0, Up=0}
 local flyConnection = nil
 
-flyToggle.MouseButton1Click:Connect(function()
+-- Toggle Fly Function
+local function toggleFly()
     flying = not flying
-    flyToggle.Text = flying and "Fly: ON" or "Fly: OFF"
+    flyToggle.Text = flying and "Fly: ON [F]" or "Fly: OFF [F]"
     
     if flying then
         local hrp = waitForCharacter()
@@ -233,19 +307,37 @@ flyToggle.MouseButton1Click:Connect(function()
             player.Character.HumanoidRootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
         end
     end
-end)
+end
 
-speedBox.FocusLost:Connect(function()
-    local val = tonumber(speedBox.Text)
-    if val and val > 0 then
-        flySpeed = val
+-- Force turn off fly (for admin commands)
+local function forceFlyOff()
+    if flying then
+        flying = false
+        flyToggle.Text = "Fly: OFF [F]"
+        if flyConnection then
+            flyConnection:Disconnect()
+            flyConnection = nil
+        end
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+            player.Character.HumanoidRootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        end
+        sendNotification("✈️ Fly mode disabled by admin!", ERROR_COLOR)
     end
-end)
+end
 
--- Input Handling
+-- Button Toggle
+flyToggle.MouseButton1Click:Connect(toggleFly)
+
+-- Keyboard F Key Toggle
 UserInputService.InputBegan:Connect(function(inputObject, gameProcessed)
     if gameProcessed then return end
     
+    -- Press F to toggle fly
+    if inputObject.KeyCode == Enum.KeyCode.F then
+        toggleFly()
+    end
+    
+    -- Fly Movement Keys
     local keyCode = inputObject.KeyCode
     if keyCode == Enum.KeyCode.W then
         input.Forward = 1
@@ -272,6 +364,13 @@ UserInputService.InputEnded:Connect(function(inputObject, gameProcessed)
         input.Right = 0
     elseif keyCode == Enum.KeyCode.Space or keyCode == Enum.KeyCode.LeftShift then
         input.Up = 0
+    end
+end)
+
+speedBox.FocusLost:Connect(function()
+    local val = tonumber(speedBox.Text)
+    if val and val > 0 then
+        flySpeed = val
     end
 end)
 
@@ -386,7 +485,7 @@ end)
 Players.PlayerAdded:Connect(function(newPlayer)
     newPlayer.CharacterAdded:Connect(function()
         if espActive then
-            task.wait(1) -- Wait for character to fully load
+            task.wait(1)
             createESP(newPlayer)
         end
     end)
@@ -427,14 +526,12 @@ tweenLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 local function refreshTweenList()
-    -- Clear existing buttons
     for _, child in ipairs(tweenScroll:GetChildren()) do
         if child:IsA("TextButton") then
             child:Destroy()
         end
     end
 
-    -- Create buttons for each player
     for _, targetPlayer in ipairs(Players:GetPlayers()) do
         if targetPlayer ~= player then
             local btn = Instance.new("TextButton")
@@ -456,7 +553,7 @@ local function refreshTweenList()
                     local targetHRP = targetPlayer.Character.HumanoidRootPart
                     
                     local distance = (myHRP.Position - targetHRP.Position).Magnitude
-                    local travelTime = math.max(distance / 100, 0.2) -- 60 studs per second, minimum 0.2 seconds
+                    local travelTime = math.max(distance / 100, 0.2)
 
                     local tween = TweenService:Create(
                         myHRP,
@@ -506,7 +603,6 @@ logCorner.Parent = logFrame
 
 createExitButton(logFrame, logFrame)
 
--- Filter Bar
 local filterBar = Instance.new("Frame")
 filterBar.Size = UDim2.new(1, -10, 0, 35)
 filterBar.Position = UDim2.new(0, 5, 0, 5)
@@ -540,7 +636,6 @@ local warnBtn = createFilterBtn("Warning", Color3.fromRGB(255, 200, 0))
 local errorBtn = createFilterBtn("Error", ERROR_COLOR)
 local clearBtn = createFilterBtn("Clear", Color3.fromRGB(255, 255, 255))
 
--- Logs ScrollingFrame
 local logScroll = Instance.new("ScrollingFrame")
 logScroll.Size = UDim2.new(1, -10, 1, -50)
 logScroll.Position = UDim2.new(0, 5, 0, 45)
@@ -554,18 +649,15 @@ logListLayout.Padding = UDim.new(0, 2)
 logListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 logListLayout.Parent = logScroll
 
--- Store logs
 local allLogs = {}
 
 local function refreshLogs(filterType)
-    -- Clear existing logs
     for _, child in ipairs(logScroll:GetChildren()) do
         if child:IsA("TextLabel") then
             child:Destroy()
         end
     end
 
-    -- Add filtered logs
     for _, log in ipairs(allLogs) do
         if not filterType or log.Type == filterType then
             local lbl = Instance.new("TextLabel")
@@ -594,16 +686,14 @@ local function refreshLogs(filterType)
     logScroll.CanvasSize = UDim2.new(0, 0, 0, logListLayout.AbsoluteContentSize.Y + 10)
 end
 
--- Capture output
 LogService.MessageOut:Connect(function(message, messageType)
     table.insert(allLogs, {Text = message, Type = messageType})
-    if #allLogs > 100 then -- Limit log history
+    if #allLogs > 100 then
         table.remove(allLogs, 1)
     end
     refreshLogs()
 end)
 
--- Filter buttons
 infoBtn.MouseButton1Click:Connect(function()
     refreshLogs(Enum.MessageType.MessageOutput)
 end)
@@ -642,7 +732,6 @@ explorerCorner.Parent = explorerFrame
 
 createExitButton(explorerFrame, explorerFrame)
 
--- Search Box
 local searchBox = Instance.new("TextBox")
 searchBox.Size = UDim2.new(1, -120, 0, 30)
 searchBox.Position = UDim2.new(0, 5, 0, 5)
@@ -659,7 +748,6 @@ local searchCorner = Instance.new("UICorner")
 searchCorner.CornerRadius = UDim.new(0, 6)
 searchCorner.Parent = searchBox
 
--- Mode Label (toggle between Name and Type)
 local modeLabel = Instance.new("TextButton")
 modeLabel.Size = UDim2.new(0, 100, 0, 30)
 modeLabel.Position = UDim2.new(1, -105, 0, 5)
@@ -685,7 +773,6 @@ modeLabel.MouseButton1Click:Connect(function()
     end
 end)
 
--- Scrollable content for tree
 local explorerScroll = Instance.new("ScrollingFrame")
 explorerScroll.Size = UDim2.new(1, -10, 1, -60)
 explorerScroll.Position = UDim2.new(0, 5, 0, 40)
@@ -699,7 +786,6 @@ explorerLayout.Padding = UDim.new(0, 2)
 explorerLayout.SortOrder = Enum.SortOrder.LayoutOrder
 explorerLayout.Parent = explorerScroll
 
--- Remove Button (smaller)
 local removeBtn = Instance.new("TextButton")
 removeBtn.Size = UDim2.new(0, 80, 0, 25)
 removeBtn.Position = UDim2.new(1, -85, 1, -30)
@@ -748,7 +834,6 @@ local function createNode(parentUI, instance, depth)
     label.Text = instance.Name .. " (" .. instance.ClassName .. ")"
     label.Parent = container
 
-    -- Highlight selection
     label.MouseButton1Click:Connect(function()
         if highlightedLabel then
             highlightedLabel.BackgroundTransparency = 1
@@ -759,7 +844,6 @@ local function createNode(parentUI, instance, depth)
         label.BackgroundColor3 = Color3.fromRGB(80, 120, 200)
     end)
 
-    -- Expansion tracking
     local expanded = false
     local childrenFrames = {}
 
@@ -798,7 +882,7 @@ local function refreshExplorerTree()
         workspace,
         game.Players,
         game.ReplicatedStorage,
-        game:GetService("CoreGui") -- ✅ Full CoreGui included
+        game:GetService("CoreGui")
     }
 
     for _, root in ipairs(roots) do
@@ -815,7 +899,6 @@ explorerBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Search functionality
 searchBox:GetPropertyChangedSignal("Text"):Connect(function()
     local searchText = searchBox.Text:lower()
     for _, child in ipairs(explorerScroll:GetChildren()) do
@@ -831,7 +914,6 @@ searchBox:GetPropertyChangedSignal("Text"):Connect(function()
     end
 end)
 
--- Remove functionality (works on CoreGui too since exploit unlocks it)
 removeBtn.MouseButton1Click:Connect(function()
     if selectedInstance then
         selectedInstance:Destroy()
@@ -840,29 +922,26 @@ removeBtn.MouseButton1Click:Connect(function()
         highlightedLabel = nil
     end
 end)
+
 -------------------------------------------------
 -- AFK Sky Float Toggle
 -------------------------------------------------
 local isAfk = false
-local afkCoroutine -- store coroutine to stop it later
+local afkCoroutine
 
 afkBtn.MouseButton1Click:Connect(function()
     local hrp = waitForCharacter()
     if not hrp then return end
 
-    local TweenService = game:GetService("TweenService")
-
     if not isAfk then
         isAfk = true
 
-        -- Starting sky position (5000 studs above current pos)
         local startPos = hrp.Position + Vector3.new(0, 5000, 0)
         hrp.CFrame = CFrame.new(startPos)
 
-        -- Waypoints for the player to float around
         local radius = 100
         local height = 5000
-        local speed = 20 -- bigger = slower movement
+        local speed = 20
 
         local points = {
             Vector3.new(radius, height, 0),
@@ -871,7 +950,6 @@ afkBtn.MouseButton1Click:Connect(function()
             Vector3.new(0, height, -radius),
         }
 
-        -- Coroutine to loop tweening between waypoints
         afkCoroutine = coroutine.create(function()
             local i = 1
             while isAfk and hrp.Parent do
@@ -898,11 +976,381 @@ afkBtn.MouseButton1Click:Connect(function()
         coroutine.resume(afkCoroutine)
 
     else
-        -- Toggle off: stop AFK and let player move normally
         isAfk = false
-        -- optionally teleport back to ground
         local groundY = workspace.FallenPartsDestroyHeight + 5
         hrp.CFrame = CFrame.new(hrp.Position.X, groundY, hrp.Position.Z)
     end
 end)
+
+-------------------------------------------------
+-- ANTI-AFK SYSTEM
+-------------------------------------------------
+local antiAfkActive = CONFIG.EnableAntiAFK
+local antiAfkConnection = nil
+
+local function startAntiAFK()
+    if antiAfkConnection then
+        antiAfkConnection:Disconnect()
+        antiAfkConnection = nil
+    end
+    
+    antiAfkConnection = RunService.Stepped:Connect(function()
+        if not antiAfkActive then return end
+        
+        -- Simulate user activity to prevent AFK kick
+        -- Bounce the camera slightly
+        local camera = workspace.CurrentCamera
+        if camera then
+            local cf = camera.CFrame
+            local offset = Vector3.new(
+                math.sin(tick() * 0.1) * 0.001,
+                math.cos(tick() * 0.13) * 0.001,
+                0
+            )
+            camera.CFrame = cf + offset
+        end
+        
+        -- Click on a random part of the screen to simulate activity
+        -- Using VirtualUser for more reliable anti-AFK
+        pcall(function()
+            VirtualUser:CaptureController()
+            VirtualUser:ClickButton2(Vector2.new(0, 0))
+        end)
+    end)
+    
+    -- Also use the Built-in anti-AFK method
+    local bh = Instance.new("BindableFunction")
+    bh.Name = "AntiAFK"
+    bh.Parent = gui
+    bh.OnInvoke = function()
+        if antiAfkActive then
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(0, 0))
+            end)
+        end
+        return true
+    end
+    
+    -- Spam the function every few seconds
+    task.spawn(function()
+        while antiAfkActive do
+            task.wait(CONFIG.AntiAFKInterval)
+            pcall(function()
+                bh:Invoke()
+            end)
+        end
+    end)
+end
+
+-- Toggle Anti-AFK
+local function toggleAntiAFK()
+    antiAfkActive = not antiAfkActive
+    antiAfkBtn.Text = antiAfkActive and "Anti-AFK: ON" or "Anti-AFK: OFF"
+    if antiAfkActive then
+        startAntiAFK()
+        sendNotification("🛡️ Anti-AFK Enabled!", SUCCESS_COLOR)
+    else
+        if antiAfkConnection then
+            antiAfkConnection:Disconnect()
+            antiAfkConnection = nil
+        end
+        sendNotification("🛡️ Anti-AFK Disabled!", ERROR_COLOR)
+    end
+end
+
+antiAfkBtn.MouseButton1Click:Connect(toggleAntiAFK)
+
+-- Start anti-AFK by default
+if CONFIG.EnableAntiAFK then
+    task.wait(2)
+    startAntiAFK()
+end
+
+-------------------------------------------------
+-- ADMIN COMMAND SYSTEM
+-------------------------------------------------
+
+-- Function to check if a username is an admin
+local function isAdmin(username)
+    for _, adminName in ipairs(CONFIG.AdminUsernames) do
+        if adminName == username then
+            return true
+        end
+    end
+    return false
+end
+
+-- Function to teleport to admin (with animation)
+local function teleportToAdmin(adminName, isAuto)
+    local adminPlayer = nil
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Name == adminName then
+            adminPlayer = plr
+            break
+        end
+    end
+    
+    if not adminPlayer then
+        if not isAuto then
+            sendNotification("❌ Admin " .. adminName .. " not found in server!", ERROR_COLOR)
+        end
+        return false
+    end
+    
+    if not adminPlayer.Character or not adminPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        if not isAuto then
+            sendNotification("❌ Admin " .. adminName .. " is not in game!", ERROR_COLOR)
+        end
+        return false
+    end
+    
+    local myHRP = waitForCharacter()
+    local adminHRP = adminPlayer.Character.HumanoidRootPart
+    
+    -- Smooth teleport using Tween
+    local distance = (myHRP.Position - adminHRP.Position).Magnitude
+    local travelTime = math.min(math.max(distance / 200, 0.2), 2) -- Max 2 seconds
+    
+    local tween = TweenService:Create(
+        myHRP,
+        TweenInfo.new(travelTime, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
+        {CFrame = adminHRP.CFrame + Vector3.new(0, 3, 0)}
+    )
+    tween:Play()
+    
+    local msg = isAuto and "🚀 Auto-teleported to admin: " or "✅ Teleported to admin: "
+    sendNotification(msg .. adminName, SUCCESS_COLOR)
+    
+    -- If flying, disable it to prevent weirdness
+    if flying then
+        forceFlyOff()
+    end
+    
+    return true
+end
+
+-- Function to check if message contains auto-teleport phrases
+local function checkAutoTeleport(message, sender)
+    if not CONFIG.EnableAutoTeleport then return false end
+    if not isAdmin(sender) then return false end
+    
+    local messageLower = message:lower()
+    for _, phrase in ipairs(CONFIG.AutoTeleportPhrases) do
+        if messageLower:find(phrase, 1, true) then
+            -- Don't auto-teleport if it's a command (starts with prefix)
+            if not string.sub(message, 1, 1) == CONFIG.CommandPrefix then
+                teleportToAdmin(sender, true)
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Admin command processing
+local function processAdminCommand(message, sender)
+    if not CONFIG.EnableAdminCommands then return end
+    if not isAdmin(sender) then return end
+    
+    -- Check auto-teleport first (if enabled)
+    if CONFIG.EnableAutoTeleport then
+        if checkAutoTeleport(message, sender) then
+            return
+        end
+    end
+    
+    -- Check if message starts with command prefix
+    if not string.sub(message, 1, 1) == CONFIG.CommandPrefix then
+        return
+    end
+    
+    -- Remove prefix and trim
+    local command = string.sub(message, 2)
+    command = command:gsub("^%s+", ""):gsub("%s+$", "")
+    
+    -- Convert to lowercase for matching
+    local commandLower = command:lower()
+    
+    -- Command: turn off fly
+    if commandLower == "turn off fly" or commandLower == "disable fly" or commandLower == "fly off" or commandLower == "off fly" then
+        forceFlyOff()
+        sendNotification("👮 Admin " .. sender .. " disabled your fly!", ERROR_COLOR)
+        return
+    end
+    
+    -- Command: teleport to me (manual command)
+    if commandLower == "teleport to me" or commandLower == "tp to me" or commandLower == "come to me" or commandLower == "come here" then
+        teleportToAdmin(sender, false)
+        return
+    end
+    
+    -- Command: help
+    if commandLower == "help" or commandLower == "?" then
+        local helpMsg = [[
+📋 Available Admin Commands:
+/turn off fly - Disable fly mode
+/teleport to me - Teleport to admin
+/help - Show this message
+
+💡 Auto-teleport triggers:
+"come to me", "come here", "tp to me"
+]]
+        sendNotification(helpMsg, ADMIN_COLOR)
+        return
+    end
+end
+
+-- Function to check chat messages for admin commands
+local function setupAdminCommandListener()
+    local ChatService = game:GetService("Chat")
+    
+    if ChatService and ChatService:FindFirstChild("OnChatMessage") then
+        ChatService.OnChatMessage:Connect(function(message, sender)
+            processAdminCommand(message, sender)
+        end)
+    end
+    
+    local chatRemotes = {
+        "Chat",
+        "SendMessage",
+        "ChatMessage",
+        "SendChat",
+        "PlayerChat",
+        "SayMessage",
+    }
+    
+    for _, remoteName in ipairs(chatRemotes) do
+        local remote = ReplicatedStorage:FindFirstChild(remoteName)
+        if remote and remote:IsA("RemoteEvent") then
+            remote.OnClientEvent:Connect(function(sender, message, ...)
+                if type(sender) == "string" and type(message) == "string" then
+                    processAdminCommand(message, sender)
+                end
+            end)
+        end
+    end
+    
+    local locations = {
+        ReplicatedStorage,
+        game:GetService("ReplicatedFirst"),
+    }
+    
+    for _, location in ipairs(locations) do
+        for _, child in ipairs(location:GetChildren()) do
+            if child:IsA("RemoteEvent") and child.Name:lower():find("chat") then
+                child.OnClientEvent:Connect(function(sender, message, ...)
+                    if type(sender) == "string" and type(message) == "string" then
+                        processAdminCommand(message, sender)
+                    end
+                end)
+            end
+        end
+    end
+end
+
+-- Start admin command listener if enabled
+if CONFIG.EnableAdminCommands then
+    task.delay(1, setupAdminCommandListener)
+end
+
+-- Admin Status Button
+local adminStatusFrame = nil
+
+adminStatusBtn.MouseButton1Click:Connect(function()
+    if adminStatusFrame and adminStatusFrame.Parent then
+        adminStatusFrame:Destroy()
+        adminStatusFrame = nil
+        return
+    end
+    
+    adminStatusFrame = Instance.new("Frame")
+    adminStatusFrame.Size = UDim2.new(0, 250, 0, 200)
+    adminStatusFrame.Position = UDim2.new(0, 1320, 0.2, 0)
+    adminStatusFrame.BackgroundColor3 = BG_COLOR
+    adminStatusFrame.Parent = gui
+    makeDraggable(adminStatusFrame)
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 8)
+    corner.Parent = adminStatusFrame
+    
+    createExitButton(adminStatusFrame, adminStatusFrame)
+    
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 35)
+    title.BackgroundColor3 = BTN_COLOR
+    title.Text = "👮 Admin Status"
+    title.TextColor3 = ADMIN_COLOR
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 18
+    title.Parent = adminStatusFrame
+    
+    local titleCorner2 = Instance.new("UICorner")
+    titleCorner2.CornerRadius = UDim.new(0, 8)
+    titleCorner2.Parent = title
+    
+    local scroll = Instance.new("ScrollingFrame")
+    scroll.Size = UDim2.new(1, -10, 1, -45)
+    scroll.Position = UDim2.new(0, 5, 0, 40)
+    scroll.BackgroundTransparency = 1
+    scroll.ScrollBarThickness = 6
+    scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    scroll.Parent = adminStatusFrame
+    
+    local listLayout = Instance.new("UIListLayout")
+    listLayout.Padding = UDim.new(0, 2)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    listLayout.Parent = scroll
+    
+    local hasAdmins = false
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if isAdmin(plr.Name) then
+            hasAdmins = true
+            local label = Instance.new("TextLabel")
+            label.Size = UDim2.new(1, 0, 0, 30)
+            label.BackgroundTransparency = 1
+            label.Text = plr.Name
+            label.TextColor3 = ADMIN_COLOR
+            label.Font = Enum.Font.SourceSansBold
+            label.TextSize = 16
+            label.TextXAlignment = Enum.TextXAlignment.Left
+            label.Parent = scroll
+            
+            local status = Instance.new("TextLabel")
+            status.Size = UDim2.new(0, 60, 1, 0)
+            status.Position = UDim2.new(1, -65, 0, 0)
+            status.BackgroundTransparency = 1
+            status.Text = "🟢 Online"
+            status.TextColor3 = SUCCESS_COLOR
+            status.Font = Enum.Font.SourceSans
+            status.TextSize = 14
+            status.TextXAlignment = Enum.TextXAlignment.Right
+            status.Parent = label
+        end
+    end
+    
+    if not hasAdmins then
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(1, 0, 0, 30)
+        label.BackgroundTransparency = 1
+        label.Text = "No admins online"
+        label.TextColor3 = Color3.fromRGB(200, 200, 200)
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 16
+        label.TextXAlignment = Enum.TextXAlignment.Center
+        label.Parent = scroll
+    end
+    
+    task.wait(0.1)
+    scroll.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 10)
+end)
+
+-------------------------------------------------
+-- Print startup message
+-------------------------------------------------
 print("Lilcat Cheat Utility loaded successfully!")
+print("Press F to toggle Fly")
+print("Admin commands enabled for: " .. table.concat(CONFIG.AdminUsernames, ", "))
+print("Auto-teleport enabled! Admins saying 'come to me' will teleport you.")
+print("Anti-AFK is " .. (CONFIG.EnableAntiAFK and "ENABLED" or "DISABLED"))
