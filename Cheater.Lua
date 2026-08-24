@@ -1,5 +1,5 @@
 -- ============================================================
--- LILCAT ULTIMATE UTILITY - Complete Professional UI
+-- LILCAT ULTIMATE UTILITY - COMPLETE FIXED VERSION
 -- Place in StarterPlayerScripts
 -- ============================================================
 
@@ -66,7 +66,19 @@ local colors = {
 }
 
 -- ============================================================
--- UTILITY
+-- GUI SETUP
+-- ============================================================
+local oldgui = CoreGui:FindFirstChild("LilcatUtility")
+if oldgui then oldgui:Destroy() end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "LilcatUtility"
+gui.Parent = CoreGui
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+
+-- ============================================================
+-- UTILITY FUNCTIONS
 -- ============================================================
 local function waitForCharacter()
     if not player.Character then player.CharacterAdded:Wait() end
@@ -138,7 +150,6 @@ local function sendNotification(text, color, duration)
                 label.TextXAlignment = Enum.TextXAlignment.Left
                 label.Parent = frame
                 
-                -- Animate in
                 frame.Position = UDim2.new(0.5, -210, 0, -60)
                 local tweenIn = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
                     Position = UDim2.new(0.5, -210, 0, 60)
@@ -148,7 +159,6 @@ local function sendNotification(text, color, duration)
                 
                 task.wait(notif.duration)
                 
-                -- Animate out
                 local tweenOut = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
                     Position = UDim2.new(0.5, -210, 0, -60)
                 })
@@ -162,24 +172,30 @@ local function sendNotification(text, color, duration)
 end
 
 -- ============================================================
--- GUI SETUP
+-- FEATURES STATE
 -- ============================================================
-local oldgui = CoreGui:FindFirstChild("LilcatUtility")
-if oldgui then oldgui:Destroy() end
+local features = {
+    fly = false,
+    esp = false,
+    antiAfk = CONFIG.EnableAntiAFK,
+    afkPlatform = false,
+    lock = false,
+    highlight = false,
+    fling = false,
+}
 
-local gui = Instance.new("ScreenGui")
-gui.Name = "LilcatUtility"
-gui.Parent = CoreGui
-gui.ResetOnSpawn = false
-gui.IgnoreGuiInset = true
+local flySpeed = CONFIG.DefaultFlySpeed
+local flyInput = {Forward = 0, Right = 0, Up = 0}
+local flyConnection = nil
+local flyVelocity = Vector3.new()
 
 -- ============================================================
--- MAIN MENU - FULLY ANIMATED
+-- MAIN MENU
 -- ============================================================
 local menuVisible = true
 local menu = Instance.new("Frame")
-menu.Size = UDim2.new(0, 320, 0, 460)
-menu.Position = UDim2.new(0, 25, 0.1, 0)
+menu.Size = UDim2.new(0, 340, 0, 480)
+menu.Position = UDim2.new(0, 25, 0.08, 0)
 menu.BackgroundColor3 = colors.bg
 menu.BackgroundTransparency = 0.05
 menu.BorderSizePixel = 0
@@ -188,35 +204,17 @@ menu.Parent = gui
 menu.Active = true
 menu.Draggable = true
 
--- Main corner
 local menuCorner = Instance.new("UICorner")
 menuCorner.CornerRadius = UDim.new(0, 14)
 menuCorner.Parent = menu
 
--- Glow border
 local glowStroke = Instance.new("UIStroke")
 glowStroke.Color = colors.accent
 glowStroke.Thickness = 1.5
 glowStroke.Transparency = 0.6
 glowStroke.Parent = menu
 
--- Glow effect
-local glowFrame = Instance.new("Frame")
-glowFrame.Size = UDim2.new(1, 30, 1, 30)
-glowFrame.Position = UDim2.new(0, -15, 0, -15)
-glowFrame.BackgroundColor3 = colors.accent
-glowFrame.BackgroundTransparency = 0.93
-glowFrame.BorderSizePixel = 0
-glowFrame.ZIndex = 0
-glowFrame.Parent = menu
-
-local glowCorner = Instance.new("UICorner")
-glowCorner.CornerRadius = UDim.new(0, 24)
-glowCorner.Parent = glowFrame
-
--- ============================================================
--- TITLE BAR
--- ============================================================
+-- Title Bar
 local titleBar = Instance.new("Frame")
 titleBar.Size = UDim2.new(1, 0, 0, 50)
 titleBar.BackgroundColor3 = colors.bg2
@@ -246,11 +244,10 @@ titleLabel.BackgroundTransparency = 1
 titleLabel.Text = "LILCAT UTILITY"
 titleLabel.TextColor3 = colors.text
 titleLabel.Font = Enum.Font.GothamBold
-titleLabel.TextSize = 17
+titleLabel.TextSize = 18
 titleLabel.TextXAlignment = Enum.TextXAlignment.Left
 titleLabel.Parent = titleBar
 
--- Close button with animation
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 34, 0, 34)
 closeBtn.Position = UDim2.new(1, -40, 0, 8)
@@ -267,27 +264,12 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 8)
 closeCorner.Parent = closeBtn
 
-closeBtn.MouseEnter:Connect(function()
-    TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.2}):Play()
-    TweenService:Create(closeBtn, TweenInfo.new(0.15), {TextColor3 = Color3.fromRGB(255, 255, 255)}):Play()
-end)
-closeBtn.MouseLeave:Connect(function()
-    TweenService:Create(closeBtn, TweenInfo.new(0.15), {BackgroundTransparency = 0.6}):Play()
-    TweenService:Create(closeBtn, TweenInfo.new(0.15), {TextColor3 = colors.error}):Play()
-end)
-
 closeBtn.MouseButton1Click:Connect(function()
     menuVisible = not menuVisible
-    TweenService:Create(menu, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), {
-        Size = menuVisible and UDim2.new(0, 320, 0, 460) or UDim2.new(0, 320, 0, 0)
-    }):Play()
-    task.wait(0.3)
     menu.Visible = menuVisible
 end)
 
--- ============================================================
--- TAB BAR WITH ANIMATION
--- ============================================================
+-- Tab Bar
 local tabBar = Instance.new("Frame")
 tabBar.Size = UDim2.new(1, 0, 0, 38)
 tabBar.Position = UDim2.new(0, 0, 0, 50)
@@ -302,8 +284,8 @@ local tabButtons = {}
 
 local function createTabButton(name)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0, 60, 0, 30)
-    btn.Position = UDim2.new(0, 4 + (#tabButtons * 64), 0, 4)
+    btn.Size = UDim2.new(0, 62, 0, 30)
+    btn.Position = UDim2.new(0, 4 + (#tabButtons * 66), 0, 4)
     btn.BackgroundColor3 = colors.bg3
     btn.BackgroundTransparency = 0.7
     btn.Text = name
@@ -317,27 +299,14 @@ local function createTabButton(name)
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = btn
     
-    btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundTransparency = 0.3}):Play()
-    end)
-    btn.MouseLeave:Connect(function()
-        if currentTab ~= name then
-            TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundTransparency = 0.7}):Play()
-        end
-    end)
-    
     btn.MouseButton1Click:Connect(function()
         currentTab = name
         for _, tb in pairs(tabButtons) do
-            TweenService:Create(tb, TweenInfo.new(0.2), {
-                BackgroundTransparency = 0.7,
-                TextColor3 = colors.textDim
-            }):Play()
+            tb.BackgroundTransparency = 0.7
+            tb.TextColor3 = colors.textDim
         end
-        TweenService:Create(btn, TweenInfo.new(0.2), {
-            BackgroundTransparency = 0.2,
-            TextColor3 = colors.text
-        }):Play()
+        btn.BackgroundTransparency = 0.2
+        btn.TextColor3 = colors.text
         updateTabContent()
     end)
     
@@ -351,12 +320,12 @@ end
 
 -- Select first tab
 task.wait(0.1)
-tabButtons["Main"].BackgroundTransparency = 0.2
-tabButtons["Main"].TextColor3 = colors.text
+if tabButtons["Main"] then
+    tabButtons["Main"].BackgroundTransparency = 0.2
+    tabButtons["Main"].TextColor3 = colors.text
+end
 
--- ============================================================
--- TAB CONTENT - SCROLLABLE
--- ============================================================
+-- Tab Content
 local tabContent = Instance.new("Frame")
 tabContent.Size = UDim2.new(1, -20, 1, -95)
 tabContent.Position = UDim2.new(0, 10, 0, 93)
@@ -382,15 +351,15 @@ scrollLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
 end)
 
 -- ============================================================
--- UI COMPONENTS - WITH ANIMATIONS
+-- UI COMPONENTS
 -- ============================================================
 
--- Animated Button
-local function createAnimatedButton(text, parent, callback, icon, color)
+-- Regular Button (works)
+local function createButton(text, parent, callback, icon)
     local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1, 0, 0, 40)
-    btn.BackgroundColor3 = color or colors.bg2
-    btn.BackgroundTransparency = 0.4
+    btn.Size = UDim2.new(1, 0, 0, 38)
+    btn.BackgroundColor3 = colors.bg2
+    btn.BackgroundTransparency = 0.3
     btn.Text = ""
     btn.BorderSizePixel = 0
     btn.Parent = parent
@@ -398,12 +367,6 @@ local function createAnimatedButton(text, parent, callback, icon, color)
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 8)
     corner.Parent = btn
-    
-    local stroke = Instance.new("UIStroke")
-    stroke.Color = colors.bg4
-    stroke.Thickness = 1
-    stroke.Transparency = 0.4
-    stroke.Parent = btn
     
     local label = Instance.new("TextLabel")
     label.Size = UDim2.new(1, -10, 1, 0)
@@ -416,29 +379,19 @@ local function createAnimatedButton(text, parent, callback, icon, color)
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Parent = btn
     
-    btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundTransparency = 0.15}):Play()
-        TweenService:Create(stroke, TweenInfo.new(0.15), {Transparency = 0.1}):Play()
-    end)
-    btn.MouseLeave:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.15), {BackgroundTransparency = 0.4}):Play()
-        TweenService:Create(stroke, TweenInfo.new(0.15), {Transparency = 0.4}):Play()
-    end)
-    
     btn.MouseButton1Click:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundTransparency = 0.05}):Play()
-        task.wait(0.1)
-        TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundTransparency = 0.4}):Play()
-        if callback then callback(btn) end
+        if callback then callback() end
     end)
     
     return btn
 end
 
--- Animated Toggle
-local function createAnimatedToggle(text, parent, callback, icon)
+-- Toggle Button (works with state)
+local function createToggle(text, parent, callback, icon, initialState)
+    local state = initialState or false
+    
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(1, 0, 0, 40)
+    frame.Size = UDim2.new(1, 0, 0, 38)
     frame.BackgroundTransparency = 1
     frame.Parent = parent
     
@@ -453,10 +406,9 @@ local function createAnimatedToggle(text, parent, callback, icon)
     label.Parent = frame
     
     local toggleBg = Instance.new("Frame")
-    toggleBg.Size = UDim2.new(0, 52, 0, 30)
-    toggleBg.Position = UDim2.new(1, -56, 0.5, -15)
+    toggleBg.Size = UDim2.new(0, 50, 0, 28)
+    toggleBg.Position = UDim2.new(1, -54, 0.5, -14)
     toggleBg.BackgroundColor3 = colors.bg3
-    toggleBg.BackgroundTransparency = 0.3
     toggleBg.BorderSizePixel = 0
     toggleBg.Parent = frame
     
@@ -465,8 +417,8 @@ local function createAnimatedToggle(text, parent, callback, icon)
     toggleCorner.Parent = toggleBg
     
     local indicator = Instance.new("Frame")
-    indicator.Size = UDim2.new(0, 24, 0, 24)
-    indicator.Position = UDim2.new(0, 3, 0.5, -12)
+    indicator.Size = UDim2.new(0, 22, 0, 22)
+    indicator.Position = UDim2.new(0, 3, 0.5, -11)
     indicator.BackgroundColor3 = colors.textDim
     indicator.BorderSizePixel = 0
     indicator.Parent = toggleBg
@@ -475,22 +427,15 @@ local function createAnimatedToggle(text, parent, callback, icon)
     indicatorCorner.CornerRadius = UDim.new(1, 0)
     indicatorCorner.Parent = indicator
     
-    local state = false
-    
-    local function updateToggle(anim)
-        if anim == nil then anim = true end
+    local function updateToggle()
         if state then
-            TweenService:Create(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = colors.accent}):Play()
-            TweenService:Create(indicator, TweenInfo.new(0.2), {
-                Position = UDim2.new(1, -27, 0.5, -12),
-                BackgroundColor3 = colors.text
-            }):Play()
+            toggleBg.BackgroundColor3 = colors.accent
+            indicator.Position = UDim2.new(1, -25, 0.5, -11)
+            indicator.BackgroundColor3 = colors.text
         else
-            TweenService:Create(toggleBg, TweenInfo.new(0.2), {BackgroundColor3 = colors.bg3}):Play()
-            TweenService:Create(indicator, TweenInfo.new(0.2), {
-                Position = UDim2.new(0, 3, 0.5, -12),
-                BackgroundColor3 = colors.textDim
-            }):Play()
+            toggleBg.BackgroundColor3 = colors.bg3
+            indicator.Position = UDim2.new(0, 3, 0.5, -11)
+            indicator.BackgroundColor3 = colors.textDim
         end
     end
     
@@ -506,32 +451,15 @@ local function createAnimatedToggle(text, parent, callback, icon)
         if callback then callback(state) end
     end)
     
-    updateToggle(false)
-    return frame, function() return state end
+    updateToggle()
+    return frame
 end
 
 -- ============================================================
--- FEATURES STATE
--- ============================================================
-local features = {
-    fly = false,
-    esp = false,
-    antiAfk = CONFIG.EnableAntiAFK,
-    afkPlatform = false,
-    lock = false,
-    highlight = false,
-    fling = false,
-}
-
-local flySpeed = CONFIG.DefaultFlySpeed
-local flyInput = {Forward = 0, Right = 0, Up = 0}
-local flyConnection = nil
-local flyVelocity = Vector3.new()
-
--- ============================================================
--- TAB CONTENT BUILDER
+-- UPDATE TAB CONTENT
 -- ============================================================
 local function updateTabContent()
+    -- Clear content
     for _, child in ipairs(contentScroll:GetChildren()) do
         if child:IsA("TextButton") or child:IsA("Frame") then
             child:Destroy()
@@ -541,7 +469,7 @@ local function updateTabContent()
     if currentTab == "Main" then
         -- Status Dashboard
         local statusFrame = Instance.new("Frame")
-        statusFrame.Size = UDim2.new(1, 0, 0, 80)
+        statusFrame.Size = UDim2.new(1, 0, 0, 90)
         statusFrame.BackgroundColor3 = colors.bg2
         statusFrame.BackgroundTransparency = 0.3
         statusFrame.Parent = contentScroll
@@ -553,14 +481,16 @@ local function updateTabContent()
         local statuses = {
             {"⚡ Fly", features.fly},
             {"👁️ ESP", features.esp},
-            {"🛡️ AFK", features.antiAfk},
+            {"🛡️ Anti-AFK", features.antiAfk},
             {"🎯 Lock", features.lock},
+            {"💥 Fling", features.fling},
+            {"🟩 Highlight", features.highlight},
         }
         
         for i, data in ipairs(statuses) do
             local lbl = Instance.new("TextLabel")
             lbl.Size = UDim2.new(0.5, -5, 0.5, -5)
-            lbl.Position = UDim2.new((i-1)%2 * 0.5 + 0.02, 0, math.floor((i-1)/2) * 0.5 + 0.02, 0)
+            lbl.Position = UDim2.new((i-1)%2 * 0.5 + 0.02, 0, math.floor((i-1)/2) * 0.33 + 0.02, 0)
             lbl.BackgroundTransparency = 1
             lbl.Text = data[1] .. ": " .. (data[2] and "✅ ON" or "❌ OFF")
             lbl.TextColor3 = data[2] and colors.success or colors.error
@@ -570,49 +500,49 @@ local function updateTabContent()
             lbl.Parent = statusFrame
         end
         
-        createAnimatedButton("📋 Help & Info", contentScroll, function()
+        createButton("📋 Help & Info", contentScroll, function()
             sendNotification("📋 F=Fly | E=ESP | L=Lock | H=Highlight | G=Fling", colors.accent, 5)
         end, "📋")
         
     elseif currentTab == "Combat" then
-        createAnimatedToggle("🎯 Lock Target", contentScroll, function(state)
+        createToggle("🎯 Lock Target", contentScroll, function(state)
             features.lock = state
             sendNotification("🎯 Lock " .. (state and "Enabled" or "Disabled"), state and colors.success or colors.error)
             if not state and lockHighlight then unlockTarget() end
-        end, "🎯")
+        end, "🎯", features.lock)
         
-        createAnimatedToggle("💥 Fling Mode", contentScroll, function(state)
+        createToggle("💥 Fling Mode", contentScroll, function(state)
             features.fling = state
             if state then startFling() else stopFling() end
             sendNotification("💥 Fling " .. (state and "Started" or "Stopped"), state and colors.success or colors.error)
-        end, "💥")
+        end, "💥", features.fling)
         
-        createAnimatedToggle("👁️ ESP Players", contentScroll, function(state)
+        createToggle("👁️ ESP Players", contentScroll, function(state)
             features.esp = state
             if state then refreshESP() else clearESP() end
             sendNotification("👁️ ESP " .. (state and "Enabled" or "Disabled"), state and colors.success or colors.error)
-        end, "👁️")
+        end, "👁️", features.esp)
         
-        createAnimatedToggle("🟩 Highlight", contentScroll, function(state)
+        createToggle("🟩 Highlight", contentScroll, function(state)
             features.highlight = state
             highlightActive = state
             sendNotification("🟩 Highlight " .. (state and "Enabled" or "Disabled"), state and colors.success or colors.error)
-        end, "🟩")
+        end, "🟩", features.highlight)
         
     elseif currentTab == "Movement" then
-        createAnimatedToggle("✈️ Fly Mode", contentScroll, function(state)
+        createToggle("✈️ Fly Mode", contentScroll, function(state)
             toggleFly(state)
-        end, "✈️")
+        end, "✈️", features.fly)
         
-        createAnimatedToggle("💤 AFK Platform", contentScroll, function(state)
+        createToggle("💤 AFK Platform", contentScroll, function(state)
             toggleAFKPlatform(state)
-        end, "💤")
+        end, "💤", features.afkPlatform)
         
-        createAnimatedToggle("🛡️ Anti-AFK", contentScroll, function(state)
+        createToggle("🛡️ Anti-AFK", contentScroll, function(state)
             toggleAntiAFK(state)
-        end, "🛡️")
+        end, "🛡️", features.antiAfk)
         
-        -- Speed Control
+        -- Speed Control with TextBox
         local speedFrame = Instance.new("Frame")
         speedFrame.Size = UDim2.new(1, 0, 0, 80)
         speedFrame.BackgroundTransparency = 1
@@ -621,7 +551,7 @@ local function updateTabContent()
         local speedLabel = Instance.new("TextLabel")
         speedLabel.Size = UDim2.new(1, 0, 0, 25)
         speedLabel.BackgroundTransparency = 1
-        speedLabel.Text = "✈️ Speed: " .. flySpeed
+        speedLabel.Text = "✈️ Fly Speed: " .. flySpeed
         speedLabel.TextColor3 = colors.text
         speedLabel.Font = Enum.Font.Gotham
         speedLabel.TextSize = 14
@@ -629,7 +559,7 @@ local function updateTabContent()
         speedLabel.Parent = speedFrame
         
         local speedInput = Instance.new("TextBox")
-        speedInput.Size = UDim2.new(0.55, 0, 0, 30)
+        speedInput.Size = UDim2.new(0.55, 0, 0, 32)
         speedInput.Position = UDim2.new(0, 0, 0, 28)
         speedInput.BackgroundColor3 = colors.bg3
         speedInput.BackgroundTransparency = 0.3
@@ -645,14 +575,14 @@ local function updateTabContent()
         speedCorner.Parent = speedInput
         
         local applyBtn = Instance.new("TextButton")
-        applyBtn.Size = UDim2.new(0.35, -5, 0, 30)
+        applyBtn.Size = UDim2.new(0.35, -5, 0, 32)
         applyBtn.Position = UDim2.new(0.65, 0, 0, 28)
         applyBtn.BackgroundColor3 = colors.accent
         applyBtn.BackgroundTransparency = 0.4
-        applyBtn.Text = "Apply"
+        applyBtn.Text = "Apply Speed"
         applyBtn.TextColor3 = colors.text
         applyBtn.Font = Enum.Font.GothamSemibold
-        applyBtn.TextSize = 14
+        applyBtn.TextSize = 13
         applyBtn.BorderSizePixel = 0
         applyBtn.Parent = speedFrame
         
@@ -664,8 +594,11 @@ local function updateTabContent()
             local val = tonumber(speedInput.Text)
             if val and val > 0 then
                 flySpeed = val
-                speedLabel.Text = "✈️ Speed: " .. flySpeed
+                speedLabel.Text = "✈️ Fly Speed: " .. flySpeed
                 sendNotification("✈️ Speed set to: " .. flySpeed, colors.accent2)
+            else
+                sendNotification("❌ Enter a valid number!", colors.error)
+                speedInput.Text = tostring(flySpeed)
             end
         end)
         
@@ -698,53 +631,53 @@ local function updateTabContent()
             
             pBtn.MouseButton1Click:Connect(function()
                 flySpeed = tonumber(val)
-                speedLabel.Text = "✈️ Speed: " .. flySpeed
+                speedLabel.Text = "✈️ Fly Speed: " .. flySpeed
                 speedInput.Text = tostring(flySpeed)
                 sendNotification("✈️ Speed set to: " .. flySpeed, colors.accent2)
             end)
         end
         
     elseif currentTab == "Visuals" then
-        createAnimatedToggle("👁️ ESP Players", contentScroll, function(state)
+        createToggle("👁️ ESP Players", contentScroll, function(state)
             features.esp = state
             if state then refreshESP() else clearESP() end
             sendNotification("👁️ ESP " .. (state and "Enabled" or "Disabled"), state and colors.success or colors.error)
-        end, "👁️")
+        end, "👁️", features.esp)
         
-        createAnimatedToggle("🟩 Highlight", contentScroll, function(state)
+        createToggle("🟩 Highlight", contentScroll, function(state)
             features.highlight = state
             highlightActive = state
             sendNotification("🟩 Highlight " .. (state and "Enabled" or "Disabled"), state and colors.success or colors.error)
-        end, "🟩")
+        end, "🟩", features.highlight)
         
-        createAnimatedToggle("🎯 Lock Target", contentScroll, function(state)
+        createToggle("🎯 Lock Target", contentScroll, function(state)
             features.lock = state
             sendNotification("🎯 Lock " .. (state and "Enabled" or "Disabled"), state and colors.success or colors.error)
             if not state and lockHighlight then unlockTarget() end
-        end, "🎯")
+        end, "🎯", features.lock)
         
     elseif currentTab == "Admin" then
-        createAnimatedButton("👮 Check Admins", contentScroll, function()
+        createButton("👮 Check Admins", contentScroll, function()
             local admins = {}
             for _, plr in ipairs(Players:GetPlayers()) do
                 if isAdmin(plr.Name) then table.insert(admins, plr.Name) end
             end
             if #admins > 0 then
-                sendNotification("👮 Admins: " .. table.concat(admins, ", "), colors.admin)
+                sendNotification("👮 Admins online: " .. table.concat(admins, ", "), colors.admin)
             else
                 sendNotification("👮 No admins online", colors.textDim)
             end
         end, "👮")
         
-        createAnimatedToggle("📨 Admin Commands", contentScroll, function(state)
+        createToggle("📨 Admin Commands", contentScroll, function(state)
             CONFIG.EnableAdminCommands = state
             sendNotification("Admin commands " .. (state and "enabled" or "disabled"), state and colors.success or colors.error)
-        end, "📨")
+        end, "📨", CONFIG.EnableAdminCommands)
         
-        createAnimatedToggle("🚀 Auto Teleport", contentScroll, function(state)
+        createToggle("🚀 Auto Teleport", contentScroll, function(state)
             CONFIG.EnableAutoTeleport = state
             sendNotification("Auto-teleport " .. (state and "enabled" or "disabled"), state and colors.success or colors.error)
-        end, "🚀")
+        end, "🚀", CONFIG.EnableAutoTeleport)
     end
 end
 
@@ -873,7 +806,6 @@ end
 -- ============================================================
 local highlights = {}
 local highlightActive = false
-local allyTeams = {}
 
 local function clearHighlights()
     highlightActive = false
@@ -902,8 +834,6 @@ local function updateHighlights()
                     local color = CONFIG.EnemyColor
                     if plr.Team == myTeam then
                         color = CONFIG.TeammateColor
-                    elseif plr.Team and allyTeams[plr.Team] then
-                        color = CONFIG.AllyColor
                     end
                     
                     local hl = highlights[pchar]
@@ -935,21 +865,11 @@ end
 local lockedTarget = nil
 local lockHighlight = nil
 local lockActive = false
-local lockMode = "Raycast"
-local targetMode = "FFA"
-local targetPartChoice = "Head"
-local lockCameraOffset = CONFIG.LockCameraOffset
+local lockCameraOffset = 1.5
 
 local function getVisibleTargetPart(target)
     if not target or not target.Character then return end
-    local char = target.Character
-    if targetPartChoice == "Head" then
-        return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
-    elseif targetPartChoice == "UpperTorso" then
-        return char:FindFirstChild("UpperTorso") or char:FindFirstChild("HumanoidRootPart")
-    elseif targetPartChoice == "HumanoidRootPart" then
-        return char:FindFirstChild("HumanoidRootPart")
-    end
+    return target.Character:FindFirstChild("Head") or target.Character:FindFirstChild("HumanoidRootPart")
 end
 
 local function isValidTarget(plr)
@@ -958,7 +878,6 @@ local function isValidTarget(plr)
     if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
     local humanoid = char:FindFirstChildOfClass("Humanoid")
     if not humanoid or humanoid.Health <= 0 then return false end
-    if targetMode == "Team" and player.Team and plr.Team == player.Team then return false end
     return true
 end
 
@@ -972,52 +891,13 @@ local function getTargetByRaycast()
             if part then
                 local dir = part.Position - hrp.Position
                 local dist = dir.Magnitude
-                local angle = math.deg(math.acos(hrp.CFrame.LookVector:Dot(dir.Unit)))
-                if dist <= CONFIG.LockMaxDistance and angle <= CONFIG.LockViewAngle and dist < distBest then
+                if dist <= CONFIG.LockMaxDistance and dist < distBest then
                     best, distBest = plr, dist
                 end
             end
         end
     end
     return best
-end
-
-local function getTargetByMouse()
-    local mousePos = UserInputService:GetMouseLocation()
-    local best, closest = nil, math.huge
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if isValidTarget(plr) then
-            local part = getVisibleTargetPart(plr)
-            if part then
-                local screenPos, vis = camera:WorldToViewportPoint(part.Position)
-                if vis then
-                    local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
-                    if dist < closest and dist < 150 then
-                        closest, best = dist, plr
-                    end
-                end
-            end
-        end
-    end
-    return best
-end
-
-local function getTargetAuto()
-    local hrp = player.Character and player.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then return end
-    local nearest, closest = nil, CONFIG.LockMaxDistance
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if isValidTarget(plr) then
-            local part = getVisibleTargetPart(plr)
-            if part then
-                local dist = (part.Position - hrp.Position).Magnitude
-                if dist < closest then
-                    closest, nearest = dist, plr
-                end
-            end
-        end
-    end
-    return nearest
 end
 
 local function applyLockHighlight(char)
@@ -1047,14 +927,7 @@ end
 local function toggleLock()
     if not features.lock then return end
     if lockActive then unlockTarget(); return end
-    local target
-    if lockMode == "Mouse" then
-        target = getTargetByMouse()
-    elseif lockMode == "Auto" then
-        target = getTargetAuto()
-    else
-        target = getTargetByRaycast()
-    end
+    local target = getTargetByRaycast()
     if target then 
         setNewTarget(target)
         sendNotification("🎯 Locked: " .. target.Name, colors.accent2)
@@ -1068,7 +941,6 @@ end
 -- ============================================================
 local flingActive = false
 local flingConnection = nil
-local fpdh = workspace.FallenPartsDestroyHeight
 
 local function stopFling()
     flingActive = false
@@ -1076,7 +948,6 @@ local function stopFling()
         flingConnection:Disconnect()
         flingConnection = nil
     end
-    workspace.FallenPartsDestroyHeight = fpdh
 end
 
 local function startFling()
@@ -1136,14 +1007,6 @@ local function performAntiAFK()
     pcall(function()
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0, 0))
-        if camera then
-            local current = camera.CFrame
-            camera.CFrame = current + Vector3.new(
-                math.sin(tick() * 0.5) * 0.0005,
-                math.cos(tick() * 0.7) * 0.0005,
-                0
-            )
-        end
     end)
 end
 
@@ -1446,7 +1309,6 @@ end
 
 updateTabContent()
 
--- Send startup notification
 sendNotification("⚡ Lilcat Ultimate Utility Loaded!", colors.accent, 3)
 
 print("=== LILCAT ULTIMATE UTILITY ===")
