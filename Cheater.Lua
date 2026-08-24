@@ -16,13 +16,16 @@ local CONFIG = {
     EnableAntiAFK = true,
     AntiAFKInterval = 45,
     DefaultFlySpeed = 50,
+    MaxFlySpeed = 999999, -- Unlimited!
     
-    -- Keybinds (KeyCode names)
+    -- Default Keybinds (user can change these in settings)
     Keybinds = {
         ToggleFly = "F",
         ToggleESP = "E",
         ToggleMenu = "RightShift",
         TeleportToAdmin = "T",
+        ToggleAFK = "B",
+        ToggleAntiAFK = "N",
     },
 }
 
@@ -53,28 +56,29 @@ local function waitForCharacter()
 end
 
 local function getKeyCode(keyName)
+    if type(keyName) == "EnumItem" then return keyName end
     local keyMap = {
-        F = Enum.KeyCode.F,
-        E = Enum.KeyCode.E,
-        T = Enum.KeyCode.T,
-        R = Enum.KeyCode.R,
-        Q = Enum.KeyCode.Q,
-        LeftShift = Enum.KeyCode.LeftShift,
-        RightShift = Enum.KeyCode.RightShift,
-        LeftControl = Enum.KeyCode.LeftControl,
-        RightControl = Enum.KeyCode.RightControl,
-        LeftAlt = Enum.KeyCode.LeftAlt,
-        RightAlt = Enum.KeyCode.RightAlt,
+        F = Enum.KeyCode.F, E = Enum.KeyCode.E, T = Enum.KeyCode.T,
+        R = Enum.KeyCode.R, Q = Enum.KeyCode.Q, B = Enum.KeyCode.B,
+        N = Enum.KeyCode.N, M = Enum.KeyCode.M, Z = Enum.KeyCode.Z,
+        X = Enum.KeyCode.X, C = Enum.KeyCode.C, V = Enum.KeyCode.V,
+        LeftShift = Enum.KeyCode.LeftShift, RightShift = Enum.KeyCode.RightShift,
+        LeftControl = Enum.KeyCode.LeftControl, RightControl = Enum.KeyCode.RightControl,
+        LeftAlt = Enum.KeyCode.LeftAlt, RightAlt = Enum.KeyCode.RightAlt,
         Space = Enum.KeyCode.Space,
-        X = Enum.KeyCode.X,
-        C = Enum.KeyCode.C,
-        V = Enum.KeyCode.V,
-        B = Enum.KeyCode.B,
-        N = Enum.KeyCode.N,
-        M = Enum.KeyCode.M,
-        Z = Enum.KeyCode.Z,
+        One = Enum.KeyCode.One, Two = Enum.KeyCode.Two, Three = Enum.KeyCode.Three,
+        Four = Enum.KeyCode.Four, Five = Enum.KeyCode.Five, Six = Enum.KeyCode.Six,
+        Seven = Enum.KeyCode.Seven, Eight = Enum.KeyCode.Eight, Nine = Enum.KeyCode.Nine,
+        Zero = Enum.KeyCode.Zero,
     }
     return keyMap[keyName] or Enum.KeyCode[keyName] or Enum.KeyCode.F
+end
+
+local function getKeyName(keyCode)
+    for name, code in pairs(getKeyCode) do
+        if code == keyCode then return name end
+    end
+    return tostring(keyCode):gsub("Enum.KeyCode.", "")
 end
 
 local function isAdmin(username)
@@ -104,6 +108,7 @@ local colors = {
     bg = Color3.fromRGB(20, 20, 25),
     bg2 = Color3.fromRGB(30, 30, 38),
     bg3 = Color3.fromRGB(40, 40, 50),
+    bg4 = Color3.fromRGB(50, 50, 60),
     accent = Color3.fromRGB(100, 180, 255),
     accent2 = Color3.fromRGB(80, 220, 160),
     error = Color3.fromRGB(255, 80, 80),
@@ -130,8 +135,8 @@ local function sendNotification(text, color, duration)
             while #notificationQueue > 0 do
                 local notif = table.remove(notificationQueue, 1)
                 local frame = Instance.new("Frame")
-                frame.Size = UDim2.new(0, 350, 0, 45)
-                frame.Position = UDim2.new(0.5, -175, 0, 60)
+                frame.Size = UDim2.new(0, 400, 0, 45)
+                frame.Position = UDim2.new(0.5, -200, 0, 60)
                 frame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
                 frame.BackgroundTransparency = 0.15
                 frame.BorderSizePixel = 0
@@ -159,19 +164,17 @@ local function sendNotification(text, color, duration)
                 label.TextXAlignment = Enum.TextXAlignment.Left
                 label.Parent = frame
                 
-                -- Animate in
-                frame.Position = UDim2.new(0.5, -175, 0, -60)
+                frame.Position = UDim2.new(0.5, -200, 0, -60)
                 local tweenIn = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
-                    Position = UDim2.new(0.5, -175, 0, 60)
+                    Position = UDim2.new(0.5, -200, 0, 60)
                 })
                 tweenIn:Play()
                 tweenIn.Completed:Wait()
                 
                 task.wait(notif.duration)
                 
-                -- Animate out
                 local tweenOut = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-                    Position = UDim2.new(0.5, -175, 0, -60)
+                    Position = UDim2.new(0.5, -200, 0, -60)
                 })
                 tweenOut:Play()
                 tweenOut.Completed:Wait()
@@ -188,8 +191,8 @@ end
 
 local menuVisible = true
 local menu = Instance.new("Frame")
-menu.Size = UDim2.new(0, 280, 0, 420)
-menu.Position = UDim2.new(0, 20, 0.15, 0)
+menu.Size = UDim2.new(0, 300, 0, 450)
+menu.Position = UDim2.new(0, 20, 0.1, 0)
 menu.BackgroundColor3 = colors.bg
 menu.BackgroundTransparency = 0.08
 menu.BorderSizePixel = 0
@@ -206,7 +209,6 @@ menuStroke.Thickness = 1
 menuStroke.Transparency = 0.6
 menuStroke.Parent = menu
 
--- Make draggable
 menu.Active = true
 menu.Draggable = true
 
@@ -324,7 +326,6 @@ local function createModernButton(text, parent, callback, icon)
         if callback then callback(btn) end
     end)
     
-    -- Hover effect
     btn.MouseEnter:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.2), {BackgroundTransparency = 0.1}):Play()
     end)
@@ -352,7 +353,7 @@ local espBtn = createModernButton("👁️ ESP Players", scrollFrame, nil, "👁
 local tweenBtn = createModernButton("📍 Teleport", scrollFrame, nil, "📍")
 local adminBtn = createModernButton("👮 Admin Panel", scrollFrame, nil, "👮")
 local afkBtn = createModernButton("💤 AFK Platform", scrollFrame, nil, "💤")
-local antiAfkBtn = createModernButton("🛡️ Anti-AFK: ON", scrollFrame, nil, "🛡️")
+local antiAfkBtn = createModernButton("🛡️ Anti-AFK", scrollFrame, nil, "🛡️")
 local settingsBtn = createModernButton("⚙️ Settings", scrollFrame, nil, "⚙️")
 
 -- Update button states
@@ -364,7 +365,7 @@ local function updateButtonStates()
 end
 
 -- ============================================================
--- FLY SYSTEM (Optimized)
+-- FLY SYSTEM (Unlimited Speed)
 -- ============================================================
 
 local flySpeed = CONFIG.DefaultFlySpeed
@@ -377,11 +378,10 @@ local function toggleFly()
     updateButtonStates()
     
     if features.fly then
-        sendNotification("✈️ Fly mode enabled!", colors.accent2)
+        sendNotification("✈️ Fly mode enabled! Speed: " .. flySpeed, colors.accent2)
         local hrp = waitForCharacter()
         if flyConnection then flyConnection:Disconnect() end
         
-        -- Use Heartbeat for smoother movement
         flyConnection = RunService.Heartbeat:Connect(function(deltaTime)
             if not features.fly then
                 if flyConnection then
@@ -429,14 +429,17 @@ local function toggleFly()
     end
 end
 
+local function updateFlySpeed(newSpeed)
+    flySpeed = math.max(1, newSpeed)
+    sendNotification("✈️ Fly speed set to: " .. flySpeed, colors.accent)
+end
+
 -- ============================================================
--- ESP SYSTEM (Optimized with throttling)
+-- ESP SYSTEM (Optimized)
 -- ============================================================
 
 local espActive = false
 local espTags = {}
-local espUpdateRate = 1/10 -- Update 10 times per second
-local espTimer = 0
 
 local function clearESP()
     espActive = false
@@ -524,7 +527,7 @@ local function toggleESP()
 end
 
 -- ============================================================
--- ANTI-AFK SYSTEM (Fixed - Non-Intrusive)
+-- ANTI-AFK SYSTEM
 -- ============================================================
 
 local antiAfkActive = CONFIG.EnableAntiAFK
@@ -533,11 +536,9 @@ local antiAfkConnection = nil
 
 local function performAntiAFK()
     pcall(function()
-        -- Method 1: VirtualUser
         VirtualUser:CaptureController()
         VirtualUser:ClickButton2(Vector2.new(0, 0))
         
-        -- Method 2: Slight camera movement (barely noticeable)
         if camera then
             local current = camera.CFrame
             local offset = Vector3.new(
@@ -558,7 +559,6 @@ local function startAntiAFK()
     
     antiAfkTimer = 0
     
-    -- Use RunService for timing (more efficient)
     antiAfkConnection = RunService.Heartbeat:Connect(function(deltaTime)
         if not antiAfkActive then return end
         
@@ -588,7 +588,7 @@ local function toggleAntiAFK()
 end
 
 -- ============================================================
--- AFK PLATFORM (Optimized)
+-- AFK PLATFORM
 -- ============================================================
 
 local afkPlatformActive = false
@@ -717,10 +717,29 @@ local function teleportToAdmin(adminName, isAuto)
 end
 
 -- ============================================================
--- KEYBIND SYSTEM
+-- KEYBIND SYSTEM (Dynamic)
 -- ============================================================
 
-local keybindHandler = {}
+local keybindFunctions = {
+    ToggleFly = toggleFly,
+    ToggleESP = toggleESP,
+    ToggleAFK = toggleAFKPlatform,
+    ToggleAntiAFK = toggleAntiAFK,
+    TeleportToAdmin = function()
+        if #CONFIG.AdminUsernames > 0 then
+            teleportToAdmin(CONFIG.AdminUsernames[1], true)
+        end
+    end,
+    ToggleMenu = function()
+        menuVisible = not menuVisible
+        menu.Visible = menuVisible
+    end,
+}
+
+local currentKeybinds = {}
+for name, key in pairs(CONFIG.Keybinds) do
+    currentKeybinds[name] = getKeyCode(key)
+end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
@@ -728,17 +747,13 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     local key = input.KeyCode
     if not key then return end
     
-    -- Check keybinds
-    if key == getKeyCode(CONFIG.Keybinds.ToggleFly) then
-        toggleFly()
-    elseif key == getKeyCode(CONFIG.Keybinds.ToggleESP) then
-        toggleESP()
-    elseif key == getKeyCode(CONFIG.Keybinds.ToggleMenu) then
-        menuVisible = not menuVisible
-        menu.Visible = menuVisible
-    elseif key == getKeyCode(CONFIG.Keybinds.TeleportToAdmin) then
-        if #CONFIG.AdminUsernames > 0 then
-            teleportToAdmin(CONFIG.AdminUsernames[1], true)
+    for bindName, bindKey in pairs(currentKeybinds) do
+        if key == bindKey then
+            local func = keybindFunctions[bindName]
+            if func then
+                task.spawn(func)
+            end
+            break
         end
     end
     
@@ -769,11 +784,12 @@ UserInputService.InputEnded:Connect(function(input, gameProcessed)
 end)
 
 -- ============================================================
--- SETTINGS MENU
+-- SETTINGS MENU (With Keybind Customization)
 -- ============================================================
 
 local settingsFrame = nil
 local settingsVisible = false
+local waitingForKeybind = nil
 
 local function createSettingsMenu()
     if settingsFrame and settingsFrame.Parent then
@@ -785,8 +801,8 @@ local function createSettingsMenu()
     
     settingsVisible = true
     settingsFrame = Instance.new("Frame")
-    settingsFrame.Size = UDim2.new(0, 320, 0, 350)
-    settingsFrame.Position = UDim2.new(0, 310, 0.15, 0)
+    settingsFrame.Size = UDim2.new(0, 380, 0, 450)
+    settingsFrame.Position = UDim2.new(0, 330, 0.1, 0)
     settingsFrame.BackgroundColor3 = colors.bg
     settingsFrame.BackgroundTransparency = 0.08
     settingsFrame.BorderSizePixel = 0
@@ -860,7 +876,7 @@ local function createSettingsMenu()
     scroll.Parent = settingsFrame
     
     local sLayout = Instance.new("UIListLayout")
-    sLayout.Padding = UDim.new(0, 8)
+    sLayout.Padding = UDim.new(0, 6)
     sLayout.SortOrder = Enum.SortOrder.LayoutOrder
     sLayout.Parent = scroll
     
@@ -868,7 +884,234 @@ local function createSettingsMenu()
         scroll.CanvasSize = UDim2.new(0, 0, 0, sLayout.AbsoluteContentSize.Y + 10)
     end)
     
-    -- Setting row creator
+    -- Section title
+    local function createSection(title)
+        local section = Instance.new("TextLabel")
+        section.Size = UDim2.new(1, 0, 0, 30)
+        section.BackgroundTransparency = 1
+        section.Text = title
+        section.TextColor3 = colors.accent
+        section.Font = Enum.Font.GothamBold
+        section.TextSize = 16
+        section.TextXAlignment = Enum.TextXAlignment.Left
+        section.Parent = scroll
+        return section
+    end
+    
+    createSection("━━━ Keybinds ━━━")
+    
+    -- Keybind row creator
+    local function createKeybindRow(label, bindName)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(1, 0, 0, 35)
+        row.BackgroundTransparency = 1
+        row.Parent = scroll
+        
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.5, -5, 1, 0)
+        lbl.BackgroundTransparency = 1
+        lbl.Text = label
+        lbl.TextColor3 = colors.text
+        lbl.Font = Enum.Font.Gotham
+        lbl.TextSize = 14
+        lbl.TextXAlignment = Enum.TextXAlignment.Left
+        lbl.Parent = row
+        
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.4, -5, 1, 0)
+        btn.Position = UDim2.new(0.6, 0, 0, 0)
+        btn.BackgroundColor3 = colors.bg3
+        btn.BackgroundTransparency = 0.3
+        btn.Text = getKeyName(currentKeybinds[bindName])
+        btn.TextColor3 = colors.accent
+        btn.Font = Enum.Font.GothamSemibold
+        btn.TextSize = 13
+        btn.BorderSizePixel = 0
+        btn.Parent = row
+        
+        local btnCorner = Instance.new("UICorner")
+        btnCorner.CornerRadius = UDim.new(0, 6)
+        btnCorner.Parent = btn
+        
+        btn.MouseButton1Click:Connect(function()
+            if waitingForKeybind then
+                sendNotification("⏳ Press ESC to cancel current keybind", colors.warn)
+                return
+            end
+            
+            waitingForKeybind = bindName
+            btn.Text = "Press any key..."
+            btn.BackgroundColor3 = colors.warn
+            btn.BackgroundTransparency = 0.5
+            
+            sendNotification("⏳ Press a key for: " .. label, colors.warn, 3)
+            
+            local connection
+            connection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+                if gameProcessed then return end
+                
+                local key = input.KeyCode
+                if not key then return end
+                
+                if key == Enum.KeyCode.Escape then
+                    connection:Disconnect()
+                    waitingForKeybind = nil
+                    btn.Text = getKeyName(currentKeybinds[bindName])
+                    btn.BackgroundColor3 = colors.bg3
+                    btn.BackgroundTransparency = 0.3
+                    sendNotification("❌ Keybind cancelled", colors.error)
+                    return
+                end
+                
+                -- Check if key is already used
+                local inUse = false
+                for name, k in pairs(currentKeybinds) do
+                    if name ~= bindName and k == key then
+                        inUse = true
+                        break
+                    end
+                end
+                
+                if inUse then
+                    sendNotification("⚠️ Key already in use! Choose another.", colors.warn)
+                    return
+                end
+                
+                currentKeybinds[bindName] = key
+                CONFIG.Keybinds[bindName] = getKeyName(key)
+                btn.Text = getKeyName(key)
+                btn.BackgroundColor3 = colors.success
+                btn.BackgroundTransparency = 0.5
+                
+                connection:Disconnect()
+                waitingForKeybind = nil
+                
+                sendNotification("✅ " .. label .. " set to: " .. getKeyName(key), colors.success)
+                
+                task.delay(0.5, function()
+                    btn.BackgroundColor3 = colors.bg3
+                    btn.BackgroundTransparency = 0.3
+                end)
+            end)
+        end)
+        
+        return row
+    end
+    
+    -- Keybind rows
+    createKeybindRow("Toggle Fly", "ToggleFly")
+    createKeybindRow("Toggle ESP", "ToggleESP")
+    createKeybindRow("Toggle Menu", "ToggleMenu")
+    createKeybindRow("Teleport to Admin", "TeleportToAdmin")
+    createKeybindRow("Toggle AFK Platform", "ToggleAFK")
+    createKeybindRow("Toggle Anti-AFK", "ToggleAntiAFK")
+    
+    createSection("━━━ Fly Speed ━━━")
+    
+    -- Speed input with unlimited
+    local speedRow = Instance.new("Frame")
+    speedRow.Size = UDim2.new(1, 0, 0, 75)
+    speedRow.BackgroundTransparency = 1
+    speedRow.Parent = scroll
+    
+    local speedLabel = Instance.new("TextLabel")
+    speedLabel.Size = UDim2.new(1, 0, 0, 25)
+    speedLabel.BackgroundTransparency = 1
+    speedLabel.Text = "Fly Speed: " .. flySpeed
+    speedLabel.TextColor3 = colors.text
+    speedLabel.Font = Enum.Font.Gotham
+    speedLabel.TextSize = 14
+    speedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    speedLabel.Parent = speedRow
+    
+    local speedInput = Instance.new("TextBox")
+    speedInput.Size = UDim2.new(0.6, 0, 0, 35)
+    speedInput.Position = UDim2.new(0, 0, 0, 28)
+    speedInput.BackgroundColor3 = colors.bg3
+    speedInput.BackgroundTransparency = 0.3
+    speedInput.Text = tostring(flySpeed)
+    speedInput.TextColor3 = colors.text
+    speedInput.Font = Enum.Font.Gotham
+    speedInput.TextSize = 16
+    speedInput.ClearTextOnFocus = false
+    speedInput.Parent = speedRow
+    
+    local speedCorner = Instance.new("UICorner")
+    speedCorner.CornerRadius = UDim.new(0, 6)
+    speedCorner.Parent = speedInput
+    
+    local applyBtn = Instance.new("TextButton")
+    applyBtn.Size = UDim2.new(0.3, -10, 0, 35)
+    applyBtn.Position = UDim2.new(0.7, 0, 0, 28)
+    applyBtn.BackgroundColor3 = colors.accent
+    applyBtn.BackgroundTransparency = 0.3
+    applyBtn.Text = "Apply"
+    applyBtn.TextColor3 = colors.text
+    applyBtn.Font = Enum.Font.GothamSemibold
+    applyBtn.TextSize = 14
+    applyBtn.BorderSizePixel = 0
+    applyBtn.Parent = speedRow
+    
+    local applyCorner = Instance.new("UICorner")
+    applyCorner.CornerRadius = UDim.new(0, 6)
+    applyCorner.Parent = applyBtn
+    
+    applyBtn.MouseButton1Click:Connect(function()
+        local val = tonumber(speedInput.Text)
+        if val and val > 0 then
+            updateFlySpeed(val)
+            speedLabel.Text = "Fly Speed: " .. flySpeed
+            if features.fly then
+                sendNotification("✈️ Speed updated to: " .. flySpeed, colors.accent2)
+            end
+        else
+            sendNotification("❌ Enter a valid number!", colors.error)
+            speedInput.Text = tostring(flySpeed)
+        end
+    end)
+    
+    -- Preset speed buttons
+    local presets = {"50", "100", "500", "1000", "5000", "99999"}
+    local presetRow = Instance.new("Frame")
+    presetRow.Size = UDim2.new(1, 0, 0, 30)
+    presetRow.BackgroundTransparency = 1
+    presetRow.Parent = scroll
+    
+    local presetLayout = Instance.new("UIListLayout")
+    presetLayout.FillDirection = Enum.FillDirection.Horizontal
+    presetLayout.Padding = UDim.new(0, 5)
+    presetLayout.Parent = presetRow
+    
+    for _, val in ipairs(presets) do
+        local pBtn = Instance.new("TextButton")
+        pBtn.Size = UDim2.new(0.15, 0, 1, 0)
+        pBtn.BackgroundColor3 = colors.bg3
+        pBtn.BackgroundTransparency = 0.3
+        pBtn.Text = val
+        pBtn.TextColor3 = colors.text
+        pBtn.Font = Enum.Font.Gotham
+        pBtn.TextSize = 12
+        pBtn.BorderSizePixel = 0
+        pBtn.Parent = presetRow
+        
+        local pCorner = Instance.new("UICorner")
+        pCorner.CornerRadius = UDim.new(0, 4)
+        pCorner.Parent = pBtn
+        
+        pBtn.MouseButton1Click:Connect(function()
+            local num = tonumber(val)
+            if num then
+                updateFlySpeed(num)
+                speedLabel.Text = "Fly Speed: " .. flySpeed
+                speedInput.Text = tostring(flySpeed)
+                sendNotification("✈️ Speed set to: " .. flySpeed, colors.accent2)
+            end
+        end)
+    end
+    
+    createSection("━━━ Features ━━━")
+    
+    -- Feature toggles in settings
     local function createSettingRow(label, value, callback)
         local row = Instance.new("Frame")
         row.Size = UDim2.new(1, 0, 0, 35)
@@ -912,66 +1155,6 @@ local function createSettingsMenu()
         return row
     end
     
-    -- Speed setting with slider
-    local speedRow = Instance.new("Frame")
-    speedRow.Size = UDim2.new(1, 0, 0, 45)
-    speedRow.BackgroundTransparency = 1
-    speedRow.Parent = scroll
-    
-    local speedLabel = Instance.new("TextLabel")
-    speedLabel.Size = UDim2.new(1, 0, 0, 20)
-    speedLabel.BackgroundTransparency = 1
-    speedLabel.Text = "Fly Speed: " .. flySpeed
-    speedLabel.TextColor3 = colors.text
-    speedLabel.Font = Enum.Font.Gotham
-    speedLabel.TextSize = 14
-    speedLabel.TextXAlignment = Enum.TextXAlignment.Left
-    speedLabel.Parent = speedRow
-    
-    local speedSlider = Instance.new("Frame")
-    speedSlider.Size = UDim2.new(1, 0, 0, 20)
-    speedSlider.Position = UDim2.new(0, 0, 0, 22)
-    speedSlider.BackgroundColor3 = colors.bg3
-    speedSlider.BackgroundTransparency = 0.3
-    speedSlider.BorderSizePixel = 0
-    speedSlider.Parent = speedRow
-    
-    local sliderCorner = Instance.new("UICorner")
-    sliderCorner.CornerRadius = UDim.new(0, 4)
-    sliderCorner.Parent = speedSlider
-    
-    local sliderFill = Instance.new("Frame")
-    sliderFill.Size = UDim2.new(flySpeed / 100, 0, 1, 0)
-    sliderFill.BackgroundColor3 = colors.accent
-    sliderFill.BackgroundTransparency = 0.3
-    sliderFill.BorderSizePixel = 0
-    sliderFill.Parent = speedSlider
-    
-    local sliderCorner2 = Instance.new("UICorner")
-    sliderCorner2.CornerRadius = UDim.new(0, 4)
-    sliderCorner2.Parent = sliderFill
-    
-    -- Speed slider interaction
-    speedSlider.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            local mouse = player:GetMouse()
-            local connection
-            connection = RunService.RenderStepped:Connect(function()
-                local pos = mouse.X - speedSlider.AbsolutePosition.X
-                local percent = math.clamp(pos / speedSlider.AbsoluteSize.X, 0, 1)
-                flySpeed = math.max(10, math.floor(percent * 100))
-                sliderFill.Size = UDim2.new(percent, 0, 1, 0)
-                speedLabel.Text = "Fly Speed: " .. flySpeed
-            end)
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    connection:Disconnect()
-                end
-            end)
-        end
-    end)
-    
-    -- Settings rows
     createSettingRow("Auto-Admin Teleport", CONFIG.EnableAutoTeleport, function(val)
         CONFIG.EnableAutoTeleport = val
         sendNotification("Auto-teleport " .. (val and "enabled" or "disabled"), val and colors.success or colors.error)
@@ -981,6 +1164,9 @@ local function createSettingsMenu()
         CONFIG.EnableAdminCommands = val
         sendNotification("Admin commands " .. (val and "enabled" or "disabled"), val and colors.success or colors.error)
     end)
+    
+    -- Scroll to top
+    scroll.CanvasPosition = Vector2.new(0, 0)
 end
 
 settingsBtn.MouseButton1Click:Connect(createSettingsMenu)
@@ -995,7 +1181,6 @@ local function processAdminCommand(message, sender)
     
     local msg = message:lower()
     
-    -- Auto-teleport
     if CONFIG.EnableAutoTeleport then
         local phrases = {"come to me", "come here", "tp to me", "teleport to me", "come", "get over here"}
         for _, phrase in ipairs(phrases) do
@@ -1006,7 +1191,6 @@ local function processAdminCommand(message, sender)
         end
     end
     
-    -- Commands
     if msg:sub(1, 1) == "/" then
         local cmd = msg:sub(2)
         
@@ -1019,14 +1203,12 @@ local function processAdminCommand(message, sender)
     end
 end
 
--- Chat listener
 local function setupAdminListener()
     local ChatService = game:GetService("Chat")
     if ChatService and ChatService:FindFirstChild("OnChatMessage") then
         ChatService.OnChatMessage:Connect(processAdminCommand)
     end
     
-    -- Check common chat remotes
     for _, name in ipairs({"Chat", "SendMessage", "ChatMessage", "SendChat", "PlayerChat", "SayMessage"}) do
         local remote = ReplicatedStorage:FindFirstChild(name)
         if remote and remote:IsA("RemoteEvent") then
@@ -1052,7 +1234,6 @@ espBtn.MouseButton1Click:Connect(toggleESP)
 antiAfkBtn.MouseButton1Click:Connect(toggleAntiAFK)
 afkBtn.MouseButton1Click:Connect(toggleAFKPlatform)
 
--- Admin panel (shows online admins)
 adminBtn.MouseButton1Click:Connect(function()
     local admins = {}
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -1068,7 +1249,6 @@ adminBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Teleport panel
 tweenBtn.MouseButton1Click:Connect(function()
     local players = {}
     for _, plr in ipairs(Players:GetPlayers()) do
@@ -1082,12 +1262,11 @@ tweenBtn.MouseButton1Click:Connect(function()
         return
     end
     
-    sendNotification("📋 Click on a player in the list", colors.accent)
+    sendNotification("📋 Click a player to teleport", colors.accent)
     
-    -- Simple player list UI
     local listFrame = Instance.new("Frame")
     listFrame.Size = UDim2.new(0, 200, 0, math.min(#players * 35 + 10, 250))
-    listFrame.Position = UDim2.new(0, 310, 0.15, 0)
+    listFrame.Position = UDim2.new(0, 330, 0.1, 0)
     listFrame.BackgroundColor3 = colors.bg
     listFrame.BackgroundTransparency = 0.08
     listFrame.BorderSizePixel = 0
@@ -1141,7 +1320,6 @@ tweenBtn.MouseButton1Click:Connect(function()
         end)
     end
     
-    -- Auto-close after 10 seconds
     task.delay(10, function()
         if listFrame and listFrame.Parent then
             listFrame:Destroy()
@@ -1150,7 +1328,7 @@ tweenBtn.MouseButton1Click:Connect(function()
 end)
 
 -- ============================================================
--- PLAYER EVENTS (Optimized)
+-- PLAYER EVENTS
 -- ============================================================
 
 Players.PlayerAdded:Connect(function(newPlayer)
@@ -1172,16 +1350,13 @@ end)
 -- INITIALIZATION
 -- ============================================================
 
--- Start anti-AFK by default
 if CONFIG.EnableAntiAFK then
     task.wait(1)
     startAntiAFK()
 end
 
--- Update button states
 updateButtonStates()
 
--- Print startup info
 sendNotification("⚡ Lilcat Utility loaded!", colors.accent, 3)
 print("=== Lilcat Utility Loaded ===")
 print("Press F - Toggle Fly")
@@ -1189,4 +1364,5 @@ print("Press E - Toggle ESP")
 print("Press RightShift - Toggle Menu")
 print("Press T - Teleport to Admin")
 print("Admin: " .. table.concat(CONFIG.AdminUsernames, ", "))
+print("Open Settings to customize keybinds!")
 print("==============================")
