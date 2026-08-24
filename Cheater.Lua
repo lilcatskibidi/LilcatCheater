@@ -266,7 +266,7 @@ local flyConnection = nil
 -- Toggle Fly Function
 local function toggleFly()
     flying = not flying
-    flyToggle.Text = flying and "Fly: ON [F]" or "Fly: OFF [F]"
+    flyToggle.Text = flying and "Fly: ON [X]" or "Fly: OFF [X]"
     
     if flying then
         local hrp = waitForCharacter()
@@ -333,7 +333,7 @@ UserInputService.InputBegan:Connect(function(inputObject, gameProcessed)
     if gameProcessed then return end
     
     -- Press F to toggle fly
-    if inputObject.KeyCode == Enum.KeyCode.F then
+    if inputObject.KeyCode == Enum.KeyCode.X then
         toggleFly()
     end
     
