@@ -1,0 +1,465 @@
+-- 🎯 LockTarget.client.lua (Fully Fixed)
+-- Press [L] to lock onto a target (Raycast / Mouse / Auto)
+-- Auto-detects visible body parts (Head, UpperTorso, HRP)
+-- Works with Team/FFA, shift lock, and smooth camera
+
+-- ======================================
+-- 🔹 Services
+-- ======================================
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local StarterGui = game:GetService("StarterGui")
+local Camera = workspace.CurrentCamera
+
+local LocalPlayer = Players.LocalPlayer
+
+-- ======================================
+-- 🔹 State
+-- ======================================
+local lockedTarget, highlight = nil, nil
+local lockActive, toggleEnabled = false, false
+local lockMode, targetMode = "Raycast", "FFA"
+local shiftLockBefore = false
+local MAX_DISTANCE = 700
+local VIEW_ANGLE = 35
+
+local TWEEN_INFO = TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local GUI_NAME = "LockTargetGui"
+
+-- ======================================
+-- 🔹 GUI Setup
+-- ======================================
+local existing = CoreGui:FindFirstChild(GUI_NAME)
+if existing then existing:Destroy() end
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = GUI_NAME
+screenGui.ResetOnSpawn = false
+screenGui.Parent = CoreGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Size = UDim2.new(0, 200, 0, 340)
+mainFrame.Position = UDim2.new(0, 20, 0, 20)
+mainFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+mainFrame.Active, mainFrame.Draggable = true, true
+mainFrame.Parent = screenGui
+Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 10)
+
+local function makeButton(y, text, color)
+	local b = Instance.new("TextButton")
+	b.Size = UDim2.new(1, -20, 0, 30)
+	b.Position = UDim2.new(0, 10, 0, y)
+	b.BackgroundColor3 = color
+	b.TextColor3 = Color3.new(1, 1, 1)
+	b.Font = Enum.Font.SourceSansBold
+	b.TextSize = 14
+	b.Text = text
+	b.Parent = mainFrame
+	Instance.new("UICorner", b).CornerRadius = UDim.new(0, 8)
+	return b
+end
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundColor3 = Color3.fromRGB(50, 50, 70)
+title.TextColor3 = Color3.new(1, 1, 1)
+title.Font = Enum.Font.SourceSansBold
+title.TextSize = 18
+title.Text = "🎯 Lock Target System"
+title.Parent = mainFrame
+Instance.new("UICorner", title).CornerRadius = UDim.new(0, 8)
+
+-- Buttons
+local toggleButton = makeButton(40, "Lock: OFF", Color3.fromRGB(70,100,70))
+toggleButton.Size = UDim2.new(1, -20, 0, 35)
+toggleButton.TextSize = 16
+
+local rayButton = makeButton(80, "Mode: Raycast", Color3.fromRGB(80,80,120))
+local mouseButton = makeButton(115, "Mode: Mouse", Color3.fromRGB(120,80,80))
+local autoButton = makeButton(150, "Mode: Auto", Color3.fromRGB(80,120,80))
+local ffaButton = makeButton(185, "Target: FFA", Color3.fromRGB(100,80,80))
+local teamButton = makeButton(220, "Target: Team", Color3.fromRGB(80,100,120))
+
+local modeLabel = Instance.new("TextLabel")
+modeLabel.Size = UDim2.new(1, -20, 0, 20)
+modeLabel.Position = UDim2.new(0, 10, 0, 255)
+modeLabel.BackgroundTransparency = 1
+modeLabel.TextColor3 = Color3.new(1,1,1)
+modeLabel.Font = Enum.Font.SourceSansBold
+modeLabel.TextSize = 14
+modeLabel.Text = "Mode: Raycast | FFA"
+modeLabel.Parent = mainFrame
+
+-- Hover animations
+local function applyHover(button)
+	local base = button.BackgroundColor3
+	button.MouseEnter:Connect(function()
+		TweenService:Create(button, TWEEN_INFO, {BackgroundColor3 = base:Lerp(Color3.new(1,1,1), 0.2)}):Play()
+	end)
+	button.MouseLeave:Connect(function()
+		TweenService:Create(button, TWEEN_INFO, {BackgroundColor3 = base}):Play()
+	end)
+end
+for _, b in ipairs({toggleButton, rayButton, mouseButton, autoButton, ffaButton, teamButton}) do
+	applyHover(b)
+end
+
+local function updateLabel()
+	modeLabel.Text = "Mode: " .. lockMode .. " | " .. targetMode
+end
+
+local function resetModeColors()
+	rayButton.BackgroundColor3 = Color3.fromRGB(80,80,120)
+	mouseButton.BackgroundColor3 = Color3.fromRGB(120,80,80)
+	autoButton.BackgroundColor3 = Color3.fromRGB(80,120,80)
+end
+
+local partLabel = Instance.new("TextLabel")
+partLabel.Size = UDim2.new(1, -20, 0, 20)
+partLabel.Position = UDim2.new(0, 10, 0, 335)
+partLabel.BackgroundTransparency = 1
+partLabel.TextColor3 = Color3.new(1,1,1)
+partLabel.Font = Enum.Font.SourceSansBold
+partLabel.TextSize = 14
+partLabel.Text = "Target Part: Head"
+partLabel.Parent = mainFrame
+
+local headButton = makeButton(360, "Head", Color3.fromRGB(100,100,100))
+local torsoButton = makeButton(395, "UpperTorso", Color3.fromRGB(100,100,100))
+local hrpButton = makeButton(430, "HumanoidRootPart", Color3.fromRGB(100,100,100))
+
+local targetPartChoice = "Head"
+
+local function resetPartButtons()
+	headButton.BackgroundColor3 = Color3.fromRGB(100,100,100)
+	torsoButton.BackgroundColor3 = Color3.fromRGB(100,100,100)
+	hrpButton.BackgroundColor3 = Color3.fromRGB(100,100,100)
+end
+
+headButton.MouseButton1Click:Connect(function()
+	targetPartChoice = "Head"
+	resetPartButtons()
+	headButton.BackgroundColor3 = Color3.fromRGB(150,150,150)
+	partLabel.Text = "Target Part: Head"
+end)
+torsoButton.MouseButton1Click:Connect(function()
+	targetPartChoice = "UpperTorso"
+	resetPartButtons()
+	torsoButton.BackgroundColor3 = Color3.fromRGB(150,150,150)
+	partLabel.Text = "Target Part: UpperTorso"
+end)
+hrpButton.MouseButton1Click:Connect(function()
+	targetPartChoice = "HumanoidRootPart"
+	resetPartButtons()
+	hrpButton.BackgroundColor3 = Color3.fromRGB(150,150,150)
+	partLabel.Text = "Target Part: HumanoidRootPart"
+end)
+
+for _, b in ipairs({headButton, torsoButton, hrpButton}) do
+	applyHover(b)
+end
+
+-- ======================================
+-- 🔹 Button Logic
+-- ======================================
+toggleButton.MouseButton1Click:Connect(function()
+	toggleEnabled = not toggleEnabled
+	toggleButton.Text = toggleEnabled and "Lock: ON" or "Lock: OFF"
+	toggleButton.BackgroundColor3 = toggleEnabled and Color3.fromRGB(100,70,120) or Color3.fromRGB(70,100,70)
+	if not toggleEnabled then
+		if highlight then highlight:Destroy() end
+		lockedTarget, highlight, lockActive = nil, nil, false
+		Camera.CameraType = Enum.CameraType.Custom
+	end
+end)
+
+rayButton.MouseButton1Click:Connect(function()
+	lockMode = "Raycast"; resetModeColors()
+	rayButton.BackgroundColor3 = Color3.fromRGB(150,120,200); updateLabel()
+end)
+mouseButton.MouseButton1Click:Connect(function()
+	lockMode = "Mouse"; resetModeColors()
+	mouseButton.BackgroundColor3 = Color3.fromRGB(150,120,200); updateLabel()
+end)
+autoButton.MouseButton1Click:Connect(function()
+	lockMode = "Auto"; resetModeColors()
+	autoButton.BackgroundColor3 = Color3.fromRGB(150,200,150); updateLabel()
+end)
+ffaButton.MouseButton1Click:Connect(function()
+	targetMode = "FFA"
+	ffaButton.BackgroundColor3 = Color3.fromRGB(150,100,100)
+	teamButton.BackgroundColor3 = Color3.fromRGB(80,100,120)
+	updateLabel()
+end)
+teamButton.MouseButton1Click:Connect(function()
+	targetMode = "Team"
+	teamButton.BackgroundColor3 = Color3.fromRGB(120,150,200)
+	ffaButton.BackgroundColor3 = Color3.fromRGB(100,80,80)
+	updateLabel()
+end)
+
+local offsetLabel = Instance.new("TextLabel")
+offsetLabel.Size = UDim2.new(1, -20, 0, 20)
+offsetLabel.Position = UDim2.new(0, 10, 0, 465)
+offsetLabel.BackgroundTransparency = 1
+offsetLabel.TextColor3 = Color3.new(1,1,1)
+offsetLabel.Font = Enum.Font.SourceSansBold
+offsetLabel.TextSize = 14
+offsetLabel.Text = "Camera Offset Y: 1.5"
+offsetLabel.Parent = mainFrame
+
+local offsetBox = Instance.new("TextBox")
+offsetBox.Size = UDim2.new(1, -20, 0, 30)
+offsetBox.Position = UDim2.new(0, 10, 0, 490)
+offsetBox.BackgroundColor3 = Color3.fromRGB(60,60,80)
+offsetBox.TextColor3 = Color3.new(1,1,1)
+offsetBox.Font = Enum.Font.SourceSans
+offsetBox.TextSize = 16
+offsetBox.PlaceholderText = "Enter offset Y..."
+offsetBox.ClearTextOnFocus = false
+offsetBox.Parent = mainFrame
+Instance.new("UICorner", offsetBox).CornerRadius = UDim.new(0,6)
+
+local cameraOffsetY = 1.5
+
+offsetBox.FocusLost:Connect(function(enter)
+	if enter then
+		local val = tonumber(offsetBox.Text)
+		if val then
+			cameraOffsetY = val
+			offsetLabel.Text = "Camera Offset Y: " .. tostring(cameraOffsetY)
+			offsetBox.Text = ""
+		else
+			offsetBox.Text = ""
+		end
+	end
+end)
+
+
+-- ======================================
+-- 🔹 Visibility Check
+-- ======================================
+local function getVisibleTargetPart(target)
+	if not target or not target.Character then return end
+	local char = target.Character
+	if targetPartChoice == "Head" then
+		return char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+	elseif targetPartChoice == "UpperTorso" then
+		return char:FindFirstChild("UpperTorso") or char:FindFirstChild("HumanoidRootPart")
+	elseif targetPartChoice == "HumanoidRootPart" then
+		return char:FindFirstChild("HumanoidRootPart")
+	end
+end
+
+
+-- ======================================
+-- 🔹 Target Detection
+-- ======================================
+local function isValidTarget(plr)
+	if plr == LocalPlayer then return false end
+	local char = plr.Character
+	if not char or not char:FindFirstChild("HumanoidRootPart") then return false end
+	local humanoid = char:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then return false end
+	if targetMode == "Team" and LocalPlayer.Team and plr.Team == LocalPlayer.Team then return false end
+	return true
+end
+
+local function getTargetByRaycast()
+	local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	local best, distBest = nil, MAX_DISTANCE
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if isValidTarget(plr) then
+			local visiblePart = getVisibleTargetPart(plr)
+			if visiblePart then
+				local dir = visiblePart.Position - hrp.Position
+				local dist = dir.Magnitude
+				local angle = math.deg(math.acos(hrp.CFrame.LookVector:Dot(dir.Unit)))
+				if dist <= MAX_DISTANCE and angle <= VIEW_ANGLE and dist < distBest then
+					best, distBest = plr, dist
+				end
+			end
+		end
+	end
+	return best
+end
+
+local function getTargetByMouse()
+	local mousePos = UserInputService:GetMouseLocation()
+	local best, closest = nil, math.huge
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if isValidTarget(plr) then
+			local part = getVisibleTargetPart(plr)
+			if part then
+				local screenPos, vis = Camera:WorldToViewportPoint(part.Position)
+				if vis then
+					local dist = (Vector2.new(screenPos.X, screenPos.Y) - mousePos).Magnitude
+					if dist < closest and dist < 150 then
+						closest, best = dist, plr
+					end
+				end
+			end
+		end
+	end
+	return best
+end
+
+-- ======================================
+-- 🔹 Auto Target (Fully Fixed)
+-- ======================================
+local function getTargetAuto()
+	local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+	if not hrp then return end
+	local nearest, closest = nil, MAX_DISTANCE
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if isValidTarget(plr) then
+			local part = getVisibleTargetPart(plr)
+			if part then
+				local dist = (part.Position - hrp.Position).Magnitude
+				if dist < closest then
+					closest, nearest = dist, plr
+				end
+			end
+		end
+	end
+	return nearest
+end
+
+-- ======================================
+-- 🔹 Highlight & Lock
+-- ======================================
+local function applyHighlight(char)
+	if highlight then highlight:Destroy() end
+	local hl = Instance.new("Highlight")
+	hl.FillColor = Color3.fromRGB(255,0,0)
+	hl.OutlineColor = Color3.fromRGB(255,255,255)
+	hl.FillTransparency, hl.OutlineTransparency = 0.4, 0
+	hl.Adornee = char
+	hl.Parent = char
+	highlight = hl
+end
+
+local function unlockTarget()
+	if highlight then highlight:Destroy() end
+	highlight, lockedTarget, lockActive = nil, nil, false
+	Camera.CameraType = Enum.CameraType.Custom
+	pcall(function() StarterGui:SetCore("ShiftLockEnabled", shiftLockBefore) end)
+end
+
+local function setNewTarget(target)
+	if not target then unlockTarget() return end
+	lockedTarget, lockActive = target, true
+	applyHighlight(target.Character)
+	Camera.CameraType = Enum.CameraType.Scriptable
+	local success, enabled = pcall(function() return StarterGui:GetCore("ShiftLockEnabled") end)
+	shiftLockBefore = success and enabled or false
+	pcall(function() StarterGui:SetCore("ShiftLockEnabled", false) end)
+end
+
+local function toggleLock()
+	if not toggleEnabled then return end
+	if lockActive then unlockTarget() return end
+	local target
+	if lockMode == "Mouse" then
+		target = getTargetByMouse()
+	elseif lockMode == "Auto" then
+		target = getTargetAuto()
+	else
+		target = getTargetByRaycast()
+	end
+	if target then setNewTarget(target) else warn("🎯 No target found.") end
+end
+
+-- ======================================
+-- 🔹 Range UI
+-- ======================================
+local rangeLabel = Instance.new("TextLabel")
+rangeLabel.Size = UDim2.new(1, -20, 0, 20)
+rangeLabel.Position = UDim2.new(0, 10, 0, 280)
+rangeLabel.BackgroundTransparency = 1
+rangeLabel.TextColor3 = Color3.new(1,1,1)
+rangeLabel.Font = Enum.Font.SourceSansBold
+rangeLabel.TextSize = 14
+rangeLabel.Text = "Range: " .. tostring(MAX_DISTANCE)
+rangeLabel.Parent = mainFrame
+
+local rangeBox = Instance.new("TextBox")
+rangeBox.Size = UDim2.new(1, -20, 0, 30)
+rangeBox.Position = UDim2.new(0, 10, 0, 305)
+rangeBox.BackgroundColor3 = Color3.fromRGB(60,60,80)
+rangeBox.TextColor3 = Color3.new(1,1,1)
+rangeBox.Font = Enum.Font.SourceSans
+rangeBox.TextSize = 16
+rangeBox.PlaceholderText = "Enter new range..."
+rangeBox.ClearTextOnFocus = false
+rangeBox.Parent = mainFrame
+Instance.new("UICorner", rangeBox).CornerRadius = UDim.new(0,6)
+
+rangeBox.FocusLost:Connect(function(enter)
+	if enter then
+		local val = tonumber(rangeBox.Text)
+		if val and val > 0 then
+			MAX_DISTANCE = math.clamp(val, 50, 9999)
+			rangeLabel.Text = "Range: " .. tostring(MAX_DISTANCE)
+			rangeBox.Text = ""
+		else
+			rangeBox.Text = ""
+			rangeLabel.Text = "Range: " .. tostring(MAX_DISTANCE)
+		end
+	end
+end)
+
+-- ======================================
+-- 🔹 Auto Switch & Camera
+-- ======================================
+RunService.Heartbeat:Connect(function()
+	if not toggleEnabled then return end
+	if lockMode == "Auto" then
+		local valid = lockedTarget
+			and lockedTarget.Character
+			and lockedTarget.Character:FindFirstChild("HumanoidRootPart")
+			and lockedTarget.Character:FindFirstChildOfClass("Humanoid")
+			and lockedTarget.Character:FindFirstChildOfClass("Humanoid").Health > 0
+		local newTarget = getTargetAuto()
+		if newTarget then
+			if not lockedTarget or newTarget ~= lockedTarget then
+				setNewTarget(newTarget)
+			end
+		elseif lockedTarget and not valid then
+			unlockTarget()
+		end
+	end
+end)
+
+RunService.RenderStepped:Connect(function()
+	if not (lockActive and lockedTarget) then return end
+	local targetChar = lockedTarget.Character
+	local targetHRP = targetChar and targetChar:FindFirstChild("HumanoidRootPart")
+	local char = LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not (targetHRP and hrp) then return end
+
+	local visiblePart = getVisibleTargetPart(lockedTarget) or targetHRP
+	local lookAt = CFrame.lookAt(hrp.Position, Vector3.new(visiblePart.Position.X, hrp.Position.Y, visiblePart.Position.Z))
+	hrp.CFrame = hrp.CFrame:Lerp(lookAt, 0.35)
+
+	local camPos = hrp.Position - hrp.CFrame.LookVector * 8 + Vector3.new(0, 3, 0)
+	local targetPos = visiblePart.Position + Vector3.new(0, cameraOffsetY, 0)
+	Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(camPos, targetPos), 0.3)
+end)
+
+-- ======================================
+-- 🔹 Input & Cleanup
+-- ======================================
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed then return end
+	if input.KeyCode == Enum.KeyCode.L then toggleLock() end
+end)
+Players.PlayerRemoving:Connect(function(plr)
+	if plr == lockedTarget then unlockTarget() end
+end)
+LocalPlayer.CharacterAdded:Connect(unlockTarget)
