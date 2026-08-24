@@ -328,11 +328,11 @@ end
 -- Button Toggle
 flyToggle.MouseButton1Click:Connect(toggleFly)
 
--- Keyboard F Key Toggle
+-- Keyboard X Key Toggle (changed from F to X)
 UserInputService.InputBegan:Connect(function(inputObject, gameProcessed)
     if gameProcessed then return end
     
-    -- Press F to toggle fly
+    -- Press X to toggle fly (changed from F to X)
     if inputObject.KeyCode == Enum.KeyCode.X then
         toggleFly()
     end
@@ -1350,7 +1350,7 @@ end)
 -- Print startup message
 -------------------------------------------------
 print("Lilcat Cheat Utility loaded successfully!")
-print("Press F to toggle Fly")
+print("Press X to toggle Fly (changed from F to X)")
 print("Admin commands enabled for: " .. table.concat(CONFIG.AdminUsernames, ", "))
 print("Auto-teleport enabled! Admins saying 'come to me' will teleport you.")
 print("Anti-AFK is " .. (CONFIG.EnableAntiAFK and "ENABLED" or "DISABLED"))
