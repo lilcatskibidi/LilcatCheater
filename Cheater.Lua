@@ -203,7 +203,7 @@ layout.Padding = UDim.new(0, 5)
 layout.Parent = buttonHolder
 
 -- Main Buttons
-local flyBtn = createButton("Fly Mode [F]", buttonHolder)
+local flyBtn = createButton("Fly Mode [X]", buttonHolder)
 local espBtn = createButton("ESP Players", buttonHolder)
 local tweenBtn = createButton("Tween to Player", buttonHolder)
 local logBtn = createButton("Admin Log", buttonHolder)
@@ -250,7 +250,7 @@ flyToggle.BackgroundColor3 = BTN_COLOR
 flyToggle.TextColor3 = Color3.new(1, 1, 1)
 flyToggle.Font = Enum.Font.SourceSansBold
 flyToggle.TextSize = 16
-flyToggle.Text = "Toggle Fly [F]"
+flyToggle.Text = "Toggle Fly [X]"
 flyToggle.Parent = flyFrame
 
 local flyToggleCorner = Instance.new("UICorner")
@@ -313,7 +313,7 @@ end
 local function forceFlyOff()
     if flying then
         flying = false
-        flyToggle.Text = "Fly: OFF [F]"
+        flyToggle.Text = "Fly: OFF [X]"
         if flyConnection then
             flyConnection:Disconnect()
             flyConnection = nil
