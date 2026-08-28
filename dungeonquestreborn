@@ -1,11 +1,9 @@
 --[[
-    AUTO-FARM SYSTEM - BLOX FRUIT STYLE (FIXED)
-    - Direct CFrame movement (like Blox Fruit cheats)
-    - Scans ALL models in dungeon for NPCs
-    - Finds nearest NPC across all rooms
+    AUTO-FARM SYSTEM - BLOX FRUIT STYLE (ULTIMATE FIX)
+    - Fixed character detection
+    - Robust tween system with error handling
+    - Camera locks onto target
     - Spams abilities and weapon swing
-    - Auto-hide when health below 50
-    - Camera tracks NPC target
 ]]
 
 local Players = game:GetService("Players")
@@ -14,6 +12,7 @@ local RunService = game:GetService("RunService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
 local Camera = Workspace.CurrentCamera
 
 -- Get remotes
@@ -24,12 +23,12 @@ local changeStartValue = remotes:WaitForChild("changeStartValue")
 
 -- Auto-farm configuration
 local config = {
-    minDistance = 15,
-    maxDistance = 30,
-    checkInterval = 0.15,
-    moveSpeed = 25,
-    hideHealthThreshold = 50,  -- Hide if health below this
-    unhideHealthThreshold = 100, -- Unhide when health reaches this
+    minDistance = 8,
+    maxDistance = 22,
+    checkInterval = 0.05,
+    moveSpeed = 90,
+    rotationSpeed = 3.0,
+    orbitRadius = 12,
 }
 
 -- Spam configuration
@@ -38,22 +37,15 @@ local spamConfig = {
     spamE = true,
     spamWeapon = true,
     spamSwing = true,
-    delay = 0.05,
-    swingDelay = 0.1,
+    delay = 0.02,
+    swingDelay = 0.05,
 }
 
 -- State variables
 local currentTarget = nil
 local isFarming = false
-local autoFarmThread = nil
-local spamThread = nil
-local moveThread = nil
-local targetPosition = nil
-local isMoving = false
 local allNPCs = {}
-local isHiding = false
-local originalWalkspeed = 16
-local originalJumpPower = 50
+local angle = 0
 
 -- Get ALL NPCs from ALL models in dungeon
 local function GetAllNPCs()
@@ -61,13 +53,10 @@ local function GetAllNPCs()
     local dungeonFolder = Workspace:FindFirstChild("dungeon")
     if not dungeonFolder then return npcs end
     
-    -- Scan ALL children in dungeon folder
     for _, model in pairs(dungeonFolder:GetChildren()) do
         if model:IsA("Model") then
-            -- Check if this model has an enemyFolder
             local enemyFolder = model:FindFirstChild("enemyFolder")
             if enemyFolder then
-                -- Get all NPCs in this enemyFolder
                 for _, npc in pairs(enemyFolder:GetChildren()) do
                     if npc:IsA("Model") then
                         local humanoid = npc:FindFirstChildOfClass("Humanoid")
@@ -77,7 +66,6 @@ local function GetAllNPCs()
                     end
                 end
             else
-                -- If no enemyFolder, check if the model itself is an NPC
                 local humanoid = model:FindFirstChildOfClass("Humanoid")
                 if humanoid and humanoid.Health > 0 then
                     table.insert(npcs, model)
@@ -89,22 +77,60 @@ local function GetAllNPCs()
     return npcs
 end
 
+-- Get character root part safely
+local function GetCharacterRoot()
+    local character = LocalPlayer.Character
+    if not character then return nil end
+    
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    if not rootPart then
+        -- Try to find any primary part
+        rootPart = character.PrimaryPart
+    end
+    if not rootPart then
+        -- Fallback: find any BasePart
+        for _, child in pairs(character:GetChildren()) do
+            if child:IsA("BasePart") and child.Name ~= "Head" then
+                rootPart = child
+                break
+            end
+        end
+    end
+    return rootPart
+end
+
+-- Get NPC root part safely
+local function GetNPCRoot(npc)
+    if not npc then return nil end
+    
+    local rootPart = npc:FindFirstChild("HumanoidRootPart")
+    if not rootPart then
+        rootPart = npc.PrimaryPart
+    end
+    if not rootPart then
+        for _, child in pairs(npc:GetChildren()) do
+            if child:IsA("BasePart") then
+                rootPart = child
+                break
+            end
+        end
+    end
+    return rootPart
+end
+
 -- Find nearest NPC from ALL NPCs
 local function FindNearestNPC()
     allNPCs = GetAllNPCs()
     if #allNPCs == 0 then return nil end
     
-    local character = LocalPlayer.Character
-    if not character then return nil end
-    
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local rootPart = GetCharacterRoot()
     if not rootPart then return nil end
     
     local nearest = nil
     local nearestDist = math.huge
     
     for _, npc in pairs(allNPCs) do
-        local npcRoot = npc:FindFirstChild("HumanoidRootPart")
+        local npcRoot = GetNPCRoot(npc)
         if npcRoot then
             local dist = (rootPart.Position - npcRoot.Position).Magnitude
             if dist < nearestDist then
@@ -114,6 +140,55 @@ local function FindNearestNPC()
         end
     end
     return nearest
+end
+
+-- Check if position is safe
+local function IsPositionSafe(position)
+    local character = LocalPlayer.Character
+    if not character then return true end
+    
+    local rootPart = GetCharacterRoot()
+    if not rootPart then return true end
+    
+    -- Simple ground check
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {character}
+    
+    local rayOrigin = position + Vector3.new(0, 10, 0)
+    local rayDirection = Vector3.new(0, -20, 0)
+    
+    local result = Workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+    
+    if result and result.Instance and result.Instance.CanCollide then
+        local distance = (position - result.Position).Magnitude
+        if distance < 1 then
+            return false
+        end
+    end
+    
+    return true
+end
+
+-- Find orbit position around enemy
+local function GetOrbitPosition(enemyPos, playerPos, angleOffset)
+    local direction = (playerPos - enemyPos)
+    direction = Vector3.new(direction.X, 0, direction.Z).Unit
+    
+    if direction.Magnitude < 0.001 then
+        direction = Vector3.new(1, 0, 0)
+    end
+    
+    local perp = Vector3.new(-direction.Z, 0, direction.X)
+    
+    local orbitAngle = angle + angleOffset
+    local orbitPos = enemyPos + 
+        (direction * math.cos(orbitAngle) + perp * math.sin(orbitAngle)) * config.orbitRadius
+    
+    -- Add slight vertical variation
+    orbitPos = orbitPos + Vector3.new(0, math.sin(orbitAngle * 2) * 0.5, 0)
+    
+    return orbitPos
 end
 
 -- Get equipped weapon
@@ -150,62 +225,32 @@ local function FireWeaponSwing()
     return false
 end
 
--- BLOX FRUIT STYLE MOVEMENT
+-- SIMPLE RELIABLE MOVEMENT
 local function MoveToPosition(targetPos)
-    local character = LocalPlayer.Character
-    if not character then return end
+    local rootPart = GetCharacterRoot()
+    if not rootPart then return false end
     
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
+    local distance = (targetPos - rootPart.Position).Magnitude
+    if distance < 0.5 then return false end
+    
+    -- Simple CFrame movement (most reliable)
+    local direction = (targetPos - rootPart.Position).Unit
+    local newPos = rootPart.Position + direction * math.min(distance, config.moveSpeed * 0.05)
+    
+    -- Face direction
+    local lookAt = CFrame.new(rootPart.Position, targetPos)
+    rootPart.CFrame = CFrame.new(newPos, Vector3.new(lookAt.LookVector.X, 0, lookAt.LookVector.Z))
+    
+    return true
+end
+
+-- Face target
+local function FaceTarget(targetPos)
+    local rootPart = GetCharacterRoot()
     if not rootPart then return end
     
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    
-    humanoid.PlatformStand = true
-    
-    local direction = (targetPos - rootPart.Position)
-    local horizontalDist = Vector3.new(direction.X, 0, direction.Z).Magnitude
-    
-    if horizontalDist < 1 then
-        isMoving = false
-        return
-    end
-    
-    local moveDir = Vector3.new(direction.X, 0, direction.Z).Unit
-    local stepSize = config.moveSpeed * 0.1
-    local newPos = rootPart.Position + moveDir * stepSize
-    
-    -- Face target
     local lookAt = CFrame.new(rootPart.Position, targetPos)
-    rootPart.CFrame = CFrame.new(newPos, Vector3.new(
-        lookAt.LookVector.X,
-        0,
-        lookAt.LookVector.Z
-    ))
-    
-    isMoving = true
-end
-
--- Stop moving
-local function StopMoving()
-    isMoving = false
-    local character = LocalPlayer.Character
-    if character then
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            humanoid.PlatformStand = false
-        end
-    end
-end
-
--- Movement loop
-local function MovementLoop()
-    while isFarming do
-        if isMoving and targetPosition then
-            MoveToPosition(targetPosition)
-        end
-        task.wait(0.05)
-    end
+    rootPart.CFrame = CFrame.new(rootPart.Position, Vector3.new(lookAt.LookVector.X, 0, lookAt.LookVector.Z))
 end
 
 -- Fire ability
@@ -294,219 +339,131 @@ local function StartSpam()
     end
 end
 
--- Camera tracking function
+-- Camera lock-on
 local function UpdateCamera()
     if not isFarming or not currentTarget then return end
     
-    local character = LocalPlayer.Character
-    if not character then return end
-    
-    local rootPart = character:FindFirstChild("HumanoidRootPart")
-    local npcRoot = currentTarget:FindFirstChild("HumanoidRootPart")
+    local rootPart = GetCharacterRoot()
+    local npcRoot = GetNPCRoot(currentTarget)
     
     if rootPart and npcRoot then
-        -- Calculate position slightly above target for better view
-        local targetPos = npcRoot.Position + Vector3.new(0, 5, 0)
+        local targetPos = npcRoot.Position + Vector3.new(0, 4, 0)
         local currentPos = rootPart.Position + Vector3.new(0, 2, 0)
-        
-        -- Smooth camera movement
         local newCFrame = CFrame.new(currentPos, targetPos)
-        Camera.CFrame = Camera.CFrame:Lerp(newCFrame, 0.2)
+        Camera.CFrame = Camera.CFrame:Lerp(newCFrame, 0.25)
     end
 end
 
--- Health check and hide function
-local function CheckHealthAndHide()
-    local character = LocalPlayer.Character
-    if not character then return end
-    
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then return end
-    
-    local health = humanoid.Health
-    local maxHealth = humanoid.MaxHealth
-    
-    -- Check if we should hide
-    if health < config.hideHealthThreshold and not isHiding then
-        isHiding = true
-        print("🫥 Health below " .. config.hideHealthThreshold .. "! Hiding...")
-        
-        -- Make character invisible
-        for _, part in pairs(character:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.Transparency = 1
-                part.CanCollide = false
-            end
-        end
-        
-        -- Disable movement
-        humanoid.WalkSpeed = 0
-        humanoid.JumpPower = 0
-        
-        -- Stop moving
-        StopMoving()
-        targetPosition = nil
-        
-        -- Stop attacking
-        spamConfig.spamQ = false
-        spamConfig.spamE = false
-        spamConfig.spamWeapon = false
-        spamConfig.spamSwing = false
-        
-    elseif health >= config.unhideHealthThreshold and isHiding then
-        isHiding = false
-        print("🫡 Health reached " .. config.unhideHealthThreshold .. "! Unhiding...")
-        
-        -- Make character visible
-        for _, part in pairs(character:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.Transparency = 0
-                part.CanCollide = true
-            end
-        end
-        
-        -- Restore movement
-        humanoid.WalkSpeed = originalWalkspeed
-        humanoid.JumpPower = originalJumpPower
-        
-        -- Restore attacking
-        spamConfig.spamQ = true
-        spamConfig.spamE = true
-        spamConfig.spamWeapon = true
-        spamConfig.spamSwing = true
-    end
-end
-
--- Main farming loop - SCANS ALL MODELS IN DUNGEON
+-- Main farming loop
 local function FarmingLoop()
+    local moveTimer = 0
+    
     while isFarming do
-        -- Check health and handle hiding
-        CheckHealthAndHide()
-        
-        -- If hiding, just wait
-        if isHiding then
-            task.wait(1)
-            continue
-        end
-        
+        -- Check character
         local character = LocalPlayer.Character
         if not character then
-            StopMoving()
-            task.wait(1)
+            task.wait(0.5)
             continue
         end
         
         local humanoid = character:FindFirstChildOfClass("Humanoid")
         if not humanoid or humanoid.Health <= 0 then
-            StopMoving()
-            task.wait(1)
+            task.wait(0.5)
             continue
         end
         
-        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        local rootPart = GetCharacterRoot()
         if not rootPart then
-            task.wait(1)
+            task.wait(0.5)
             continue
         end
         
-        -- Check if current target still exists and has health
+        -- Check current target
         if currentTarget then
             local npcHumanoid = currentTarget:FindFirstChildOfClass("Humanoid")
             if not npcHumanoid or npcHumanoid.Health <= 0 then
-                -- Target is dead, find new one from ALL NPCs
                 currentTarget = nil
-                StopMoving()
-                targetPosition = nil
                 task.wait(0.1)
                 continue
             end
             
-            local npcRoot = currentTarget:FindFirstChild("HumanoidRootPart")
+            local npcRoot = GetNPCRoot(currentTarget)
             if not npcRoot then
-                -- Target invalid, find new one
                 currentTarget = nil
-                StopMoving()
-                targetPosition = nil
                 task.wait(0.1)
                 continue
             end
             
-            -- Update camera to track target
+            -- Update camera
             UpdateCamera()
             
-            -- Calculate horizontal distance
-            local horizontalDist = Vector3.new(
-                rootPart.Position.X - npcRoot.Position.X,
-                0,
-                rootPart.Position.Z - npcRoot.Position.Z
-            ).Magnitude
-            
             local targetPos = npcRoot.Position
+            local playerPos = rootPart.Position
+            local distToTarget = (playerPos - targetPos).Magnitude
             
-            -- Maintain safe distance
-            if horizontalDist < config.minDistance then
-                -- Too close, back up
-                local away = (rootPart.Position - targetPos)
-                away = Vector3.new(away.X, 0, away.Z).Unit
-                targetPosition = targetPos + away * config.minDistance
-                isMoving = true
-                
-            elseif horizontalDist > config.maxDistance then
+            -- Update angle for orbiting
+            angle = angle + config.rotationSpeed * config.checkInterval
+            
+            -- Movement logic
+            if distToTarget > config.maxDistance then
                 -- Too far, move closer
-                local towards = (targetPos - rootPart.Position)
+                local towards = (targetPos - playerPos)
                 towards = Vector3.new(towards.X, 0, towards.Z).Unit
-                targetPosition = targetPos - towards * config.maxDistance
-                isMoving = true
+                local movePos = targetPos - towards * (config.maxDistance - 2)
+                MoveToPosition(movePos)
+                
+            elseif distToTarget < config.minDistance then
+                -- Too close, back up
+                local away = (playerPos - targetPos)
+                away = Vector3.new(away.X, 0, away.Z).Unit
+                local movePos = targetPos + away * (config.minDistance + 2)
+                MoveToPosition(movePos)
             else
-                -- In range, stop moving
-                StopMoving()
-                targetPosition = nil
+                -- In range, orbit
+                local orbitPos = GetOrbitPosition(targetPos, playerPos, angle)
+                
+                -- Check if orbit position is safe
+                if IsPositionSafe(orbitPos) then
+                    MoveToPosition(orbitPos)
+                else
+                    -- Try opposite side
+                    local oppositePos = GetOrbitPosition(targetPos, playerPos, angle + math.pi)
+                    if IsPositionSafe(oppositePos) then
+                        MoveToPosition(oppositePos)
+                    end
+                end
                 
                 -- Face target
-                local lookAt = CFrame.new(rootPart.Position, targetPos)
-                rootPart.CFrame = CFrame.new(rootPart.Position, Vector3.new(
-                    lookAt.LookVector.X,
-                    0,
-                    lookAt.LookVector.Z
-                ))
+                FaceTarget(targetPos)
             end
             
         else
-            -- Find nearest NPC from ALL NPCs (scans all models in dungeon)
+            -- Find new target
             currentTarget = FindNearestNPC()
             
             if not currentTarget then
-                -- No NPCs found anywhere, wait and check again
-                StopMoving()
-                targetPosition = nil
-                task.wait(1)
+                task.wait(0.5)
                 continue
             end
             
-            -- Found an NPC, move to it
-            local npcRoot = currentTarget:FindFirstChild("HumanoidRootPart")
+            -- Move to target
+            local npcRoot = GetNPCRoot(currentTarget)
             if npcRoot then
                 local targetPos = npcRoot.Position
-                local horizontalDist = Vector3.new(
-                    rootPart.Position.X - targetPos.X,
-                    0,
-                    rootPart.Position.Z - targetPos.Z
-                ).Magnitude
+                local playerPos = rootPart.Position
+                local distToTarget = (playerPos - targetPos).Magnitude
                 
-                if horizontalDist > config.maxDistance then
-                    local towards = (targetPos - rootPart.Position)
+                if distToTarget > config.maxDistance then
+                    local towards = (targetPos - playerPos)
                     towards = Vector3.new(towards.X, 0, towards.Z).Unit
-                    targetPosition = targetPos - towards * config.maxDistance
-                    isMoving = true
+                    local movePos = targetPos - towards * (config.maxDistance - 2)
+                    MoveToPosition(movePos)
                 end
             end
         end
         
         task.wait(config.checkInterval)
     end
-    
-    StopMoving()
-    targetPosition = nil
 end
 
 -- Start auto-farm
@@ -515,73 +472,21 @@ local function StartAutoFarm()
     
     isFarming = true
     currentTarget = nil
-    targetPosition = nil
-    allNPCs = {}
-    isHiding = false
-    
-    -- Save original movement values
-    local character = LocalPlayer.Character
-    if character then
-        local humanoid = character:FindFirstChildOfClass("Humanoid")
-        if humanoid then
-            originalWalkspeed = humanoid.WalkSpeed
-            originalJumpPower = humanoid.JumpPower
-        end
-    end
+    angle = 0
     
     print("🌾 Auto-Farm STARTED!")
     print("🔪 Weapon swing spam: " .. (spamConfig.spamSwing and "ON" or "OFF"))
-    print("📊 Scanning ALL models in dungeon for NPCs")
-    print("❤️ Auto-hide when health < " .. config.hideHealthThreshold)
-    print("📷 Camera will track targets")
+    print("🌀 Orbiting enemies at " .. config.orbitRadius .. " studs radius")
+    print("⚡ Movement speed: " .. config.moveSpeed)
     
-    moveThread = task.spawn(MovementLoop)
-    spamThread = task.spawn(StartSpam)
-    autoFarmThread = task.spawn(FarmingLoop)
+    task.spawn(StartSpam)
+    task.spawn(FarmingLoop)
 end
 
 -- Stop auto-farm
 local function StopAutoFarm()
     isFarming = false
     currentTarget = nil
-    targetPosition = nil
-    allNPCs = {}
-    
-    -- Unhide if hiding
-    if isHiding then
-        local character = LocalPlayer.Character
-        if character then
-            for _, part in pairs(character:GetDescendants()) do
-                if part:IsA("BasePart") then
-                    part.Transparency = 0
-                    part.CanCollide = true
-                end
-            end
-            local humanoid = character:FindFirstChildOfClass("Humanoid")
-            if humanoid then
-                humanoid.WalkSpeed = originalWalkspeed
-                humanoid.JumpPower = originalJumpPower
-            end
-        end
-        isHiding = false
-    end
-    
-    StopMoving()
-    
-    if moveThread then
-        task.cancel(moveThread)
-        moveThread = nil
-    end
-    
-    if spamThread then
-        task.cancel(spamThread)
-        spamThread = nil
-    end
-    
-    if autoFarmThread then
-        task.cancel(autoFarmThread)
-        autoFarmThread = nil
-    end
     
     print("⏹️ Auto-Farm STOPPED")
 end
@@ -595,18 +500,14 @@ local function ToggleAutoFarm()
     end
 end
 
--- Fire the start remote immediately
+-- Fire start remote
 task.spawn(function()
     task.wait(0.5)
     print("🔥 Firing start remote...")
     changeStartValue:FireServer()
     print("✅ Start remote fired!")
     
-    local startValue = LocalPlayer:FindFirstChild("startValue")
-    if not startValue then
-        startValue = LocalPlayer:WaitForChild("startValue")
-    end
-    
+    local startValue = LocalPlayer:WaitForChild("startValue")
     while not startValue.Value do
         task.wait(0.1)
     end
@@ -615,18 +516,9 @@ task.spawn(function()
     StartAutoFarm()
 end)
 
--- Monitor start value changes
+-- Monitor start value
 task.spawn(function()
-    local startValue = LocalPlayer:FindFirstChild("startValue")
-    if not startValue then
-        startValue = LocalPlayer:WaitForChild("startValue")
-    end
-    
-    if startValue.Value == true then
-        print("✅ Start value already true! Beginning farm...")
-        StartAutoFarm()
-    end
-    
+    local startValue = LocalPlayer:WaitForChild("startValue")
     startValue:GetPropertyChangedSignal("Value"):Connect(function()
         if startValue.Value == true and not isFarming then
             print("✅ Start value became true! Beginning farm...")
@@ -635,18 +527,11 @@ task.spawn(function()
     end)
 end)
 
--- Character respawn handling
+-- Character respawn
 LocalPlayer.CharacterAdded:Connect(function(character)
     task.wait(0.5)
-    isHiding = false
     if isFarming then
-        targetPosition = nil
-        StopMoving()
-        -- Reset spam config
-        spamConfig.spamQ = true
-        spamConfig.spamE = true
-        spamConfig.spamWeapon = true
-        spamConfig.spamSwing = true
+        currentTarget = nil
     end
 end)
 
@@ -659,7 +544,7 @@ local function CreateGUI()
     gui.ResetOnSpawn = false
     
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 200, 0, 310)
+    frame.Size = UDim2.new(0, 200, 0, 280)
     frame.Position = UDim2.new(0, 10, 0, 180)
     frame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
     frame.BackgroundTransparency = 0.15
@@ -672,7 +557,7 @@ local function CreateGUI()
     title.Size = UDim2.new(1, 0, 0, 25)
     title.Position = UDim2.new(0, 0, 0, 5)
     title.BackgroundTransparency = 1
-    title.Text = "🌾 AUTO-FARM"
+    title.Text = "🌀 AUTO-FARM"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.TextScaled = true
     title.Font = Enum.Font.GothamBold
@@ -696,7 +581,7 @@ local function CreateGUI()
         toggleBtn.BackgroundColor3 = isFarming and Color3.fromRGB(200, 50, 50) or Color3.fromRGB(50, 200, 50)
     end)
     
-    -- Swing toggle button
+    -- Swing toggle
     local swingBtn = Instance.new("TextButton")
     swingBtn.Size = UDim2.new(0.9, 0, 0, 25)
     swingBtn.Position = UDim2.new(0.05, 0, 0, 70)
@@ -712,10 +597,9 @@ local function CreateGUI()
         spamConfig.spamSwing = not spamConfig.spamSwing
         swingBtn.Text = spamConfig.spamSwing and "🔪 Swing: ON" or "🔪 Swing: OFF"
         swingBtn.BackgroundColor3 = spamConfig.spamSwing and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
-        print("Weapon Swing Spam: " .. (spamConfig.spamSwing and "ON" or "OFF"))
     end)
     
-    -- Status label
+    -- Status
     local status = Instance.new("TextLabel")
     status.Size = UDim2.new(0.9, 0, 0, 20)
     status.Position = UDim2.new(0.05, 0, 0, 100)
@@ -737,7 +621,7 @@ local function CreateGUI()
     npcCount.Font = Enum.Font.Gotham
     npcCount.Parent = frame
     
-    -- Distance display
+    -- Distance
     local distDisplay = Instance.new("TextLabel")
     distDisplay.Size = UDim2.new(0.9, 0, 0, 20)
     distDisplay.Position = UDim2.new(0.05, 0, 0, 140)
@@ -759,7 +643,7 @@ local function CreateGUI()
     roomDisplay.Font = Enum.Font.Gotham
     roomDisplay.Parent = frame
     
-    -- Weapon display
+    -- Weapon
     local weaponDisplay = Instance.new("TextLabel")
     weaponDisplay.Size = UDim2.new(0.9, 0, 0, 20)
     weaponDisplay.Position = UDim2.new(0.05, 0, 0, 180)
@@ -770,21 +654,34 @@ local function CreateGUI()
     weaponDisplay.Font = Enum.Font.Gotham
     weaponDisplay.Parent = frame
     
-    -- Health display
-    local healthDisplay = Instance.new("TextLabel")
-    healthDisplay.Size = UDim2.new(0.9, 0, 0, 20)
-    healthDisplay.Position = UDim2.new(0.05, 0, 0, 200)
-    healthDisplay.BackgroundTransparency = 1
-    healthDisplay.Text = "❤️ Health: 100%"
-    healthDisplay.TextColor3 = Color3.fromRGB(100, 255, 100)
-    healthDisplay.TextSize = 11
-    healthDisplay.Font = Enum.Font.Gotham
-    healthDisplay.Parent = frame
+    -- Orbit radius slider
+    local orbitLabel = Instance.new("TextLabel")
+    orbitLabel.Size = UDim2.new(0.45, 0, 0, 20)
+    orbitLabel.Position = UDim2.new(0.05, 0, 0, 205)
+    orbitLabel.BackgroundTransparency = 1
+    orbitLabel.Text = "Orbit: " .. config.orbitRadius
+    orbitLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    orbitLabel.TextSize = 11
+    orbitLabel.Font = Enum.Font.Gotham
+    orbitLabel.Parent = frame
+    
+    local orbitSlider = Instance.new("TextButton")
+    orbitSlider.Size = UDim2.new(0.4, 0, 0, 15)
+    orbitSlider.Position = UDim2.new(0.5, 0, 0, 205)
+    orbitSlider.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
+    orbitSlider.Text = ""
+    orbitSlider.Parent = frame
+    
+    local orbitFill = Instance.new("Frame")
+    orbitFill.Size = UDim2.new((config.orbitRadius - 5) / 25, 0, 1, 0)
+    orbitFill.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+    orbitFill.BorderSizePixel = 0
+    orbitFill.Parent = orbitSlider
     
     -- Speed slider
     local speedLabel = Instance.new("TextLabel")
     speedLabel.Size = UDim2.new(0.45, 0, 0, 20)
-    speedLabel.Position = UDim2.new(0.05, 0, 0, 225)
+    speedLabel.Position = UDim2.new(0.05, 0, 0, 230)
     speedLabel.BackgroundTransparency = 1
     speedLabel.Text = "Speed: " .. config.moveSpeed
     speedLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -794,21 +691,21 @@ local function CreateGUI()
     
     local speedSlider = Instance.new("TextButton")
     speedSlider.Size = UDim2.new(0.4, 0, 0, 15)
-    speedSlider.Position = UDim2.new(0.5, 0, 0, 225)
+    speedSlider.Position = UDim2.new(0.5, 0, 0, 230)
     speedSlider.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
     speedSlider.Text = ""
     speedSlider.Parent = frame
     
     local speedFill = Instance.new("Frame")
-    speedFill.Size = UDim2.new((config.moveSpeed - 5) / 45, 0, 1, 0)
+    speedFill.Size = UDim2.new((config.moveSpeed - 30) / 100, 0, 1, 0)
     speedFill.BackgroundColor3 = Color3.fromRGB(255, 100, 100)
     speedFill.BorderSizePixel = 0
     speedFill.Parent = speedSlider
     
-    -- Min/Max distance slider
+    -- Min/Max distance
     local minLabel = Instance.new("TextLabel")
     minLabel.Size = UDim2.new(0.45, 0, 0, 20)
-    minLabel.Position = UDim2.new(0.05, 0, 0, 250)
+    minLabel.Position = UDim2.new(0.05, 0, 0, 255)
     minLabel.BackgroundTransparency = 1
     minLabel.Text = "Min Dist: " .. config.minDistance
     minLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
@@ -818,43 +715,23 @@ local function CreateGUI()
     
     local minSlider = Instance.new("TextButton")
     minSlider.Size = UDim2.new(0.4, 0, 0, 15)
-    minSlider.Position = UDim2.new(0.5, 0, 0, 250)
+    minSlider.Position = UDim2.new(0.5, 0, 0, 255)
     minSlider.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
     minSlider.Text = ""
     minSlider.Parent = frame
     
     local minFill = Instance.new("Frame")
-    minFill.Size = UDim2.new((config.minDistance - 5) / 25, 0, 1, 0)
+    minFill.Size = UDim2.new((config.minDistance - 3) / 20, 0, 1, 0)
     minFill.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
     minFill.BorderSizePixel = 0
     minFill.Parent = minSlider
     
-    -- Max distance slider
-    local maxLabel = Instance.new("TextLabel")
-    maxLabel.Size = UDim2.new(0.45, 0, 0, 20)
-    maxLabel.Position = UDim2.new(0.05, 0, 0, 275)
-    maxLabel.BackgroundTransparency = 1
-    maxLabel.Text = "Max Dist: " .. config.maxDistance
-    maxLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-    maxLabel.TextSize = 11
-    maxLabel.Font = Enum.Font.Gotham
-    maxLabel.Parent = frame
+    -- Slider dragging
+    local dragging = {orbit = false, speed = false, min = false}
     
-    local maxSlider = Instance.new("TextButton")
-    maxSlider.Size = UDim2.new(0.4, 0, 0, 15)
-    maxSlider.Position = UDim2.new(0.5, 0, 0, 275)
-    maxSlider.BackgroundColor3 = Color3.fromRGB(100, 100, 100)
-    maxSlider.Text = ""
-    maxSlider.Parent = frame
-    
-    local maxFill = Instance.new("Frame")
-    maxFill.Size = UDim2.new((config.maxDistance - 10) / 40, 0, 1, 0)
-    maxFill.BackgroundColor3 = Color3.fromRGB(255, 200, 0)
-    maxFill.BorderSizePixel = 0
-    maxFill.Parent = maxSlider
-    
-    -- Slider drag handling
-    local dragging = {speed = false, min = false, max = false}
+    orbitSlider.MouseButton1Down:Connect(function() dragging.orbit = true end)
+    orbitSlider.MouseButton1Up:Connect(function() dragging.orbit = false end)
+    orbitSlider.MouseLeave:Connect(function() dragging.orbit = false end)
     
     speedSlider.MouseButton1Down:Connect(function() dragging.speed = true end)
     speedSlider.MouseButton1Up:Connect(function() dragging.speed = false end)
@@ -864,78 +741,50 @@ local function CreateGUI()
     minSlider.MouseButton1Up:Connect(function() dragging.min = false end)
     minSlider.MouseLeave:Connect(function() dragging.min = false end)
     
-    maxSlider.MouseButton1Down:Connect(function() dragging.max = true end)
-    maxSlider.MouseButton1Up:Connect(function() dragging.max = false end)
-    maxSlider.MouseLeave:Connect(function() dragging.max = false end)
-    
     UserInputService.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement then
             local mouse = LocalPlayer:GetMouse()
             
+            if dragging.orbit then
+                local pos = (mouse.X - orbitSlider.AbsolutePosition.X) / orbitSlider.AbsoluteSize.X
+                pos = math.clamp(pos, 0, 1)
+                config.orbitRadius = math.floor(5 + (pos * 25))
+                orbitFill.Size = UDim2.new((config.orbitRadius - 5) / 25, 0, 1, 0)
+                orbitLabel.Text = "Orbit: " .. config.orbitRadius
+            end
+            
             if dragging.speed then
                 local pos = (mouse.X - speedSlider.AbsolutePosition.X) / speedSlider.AbsoluteSize.X
                 pos = math.clamp(pos, 0, 1)
-                config.moveSpeed = math.floor(5 + (pos * 45))
-                speedFill.Size = UDim2.new((config.moveSpeed - 5) / 45, 0, 1, 0)
+                config.moveSpeed = math.floor(30 + (pos * 100))
+                speedFill.Size = UDim2.new((config.moveSpeed - 30) / 100, 0, 1, 0)
                 speedLabel.Text = "Speed: " .. config.moveSpeed
             end
             
             if dragging.min then
                 local pos = (mouse.X - minSlider.AbsolutePosition.X) / minSlider.AbsoluteSize.X
                 pos = math.clamp(pos, 0, 1)
-                config.minDistance = math.floor(5 + (pos * 25))
+                config.minDistance = math.floor(3 + (pos * 20))
                 if config.minDistance >= config.maxDistance then
                     config.minDistance = config.maxDistance - 2
                 end
-                minFill.Size = UDim2.new((config.minDistance - 5) / 25, 0, 1, 0)
+                minFill.Size = UDim2.new((config.minDistance - 3) / 20, 0, 1, 0)
                 minLabel.Text = "Min Dist: " .. config.minDistance
-            end
-            
-            if dragging.max then
-                local pos = (mouse.X - maxSlider.AbsolutePosition.X) / maxSlider.AbsoluteSize.X
-                pos = math.clamp(pos, 0, 1)
-                config.maxDistance = math.floor(10 + (pos * 40))
-                if config.maxDistance <= config.minDistance then
-                    config.maxDistance = config.minDistance + 2
-                end
-                maxFill.Size = UDim2.new((config.maxDistance - 10) / 40, 0, 1, 0)
-                maxLabel.Text = "Max Dist: " .. config.maxDistance
             end
         end
     end)
     
-    -- Update status loop
+    -- Status update loop
     task.spawn(function()
         while true do
-            -- Update health display
-            local character = LocalPlayer.Character
-            if character then
-                local humanoid = character:FindFirstChildOfClass("Humanoid")
-                if humanoid then
-                    local healthPercent = math.floor((humanoid.Health / humanoid.MaxHealth) * 100)
-                    healthDisplay.Text = "❤️ Health: " .. healthPercent .. "%"
-                    if healthPercent < config.hideHealthThreshold then
-                        healthDisplay.TextColor3 = Color3.fromRGB(255, 50, 50)
-                    elseif healthPercent < 70 then
-                        healthDisplay.TextColor3 = Color3.fromRGB(255, 200, 50)
-                    else
-                        healthDisplay.TextColor3 = Color3.fromRGB(100, 255, 100)
-                    end
-                end
-            end
-            
-            -- Get NPC count from ALL rooms
             local allNPCsList = GetAllNPCs()
             npcCount.Text = "NPCs: " .. #allNPCsList
             
-            -- Get current room name
             local dungeonFolder = Workspace:FindFirstChild("dungeon")
             if dungeonFolder then
-                local roomCount = 0
                 local activeRooms = {}
                 for _, child in pairs(dungeonFolder:GetChildren()) do
                     if child:IsA("Model") and child:FindFirstChild("enemyFolder") then
-                        roomCount = roomCount + 1
                         local enemyCount = 0
                         local enemyFolder = child:FindFirstChild("enemyFolder")
                         if enemyFolder then
@@ -971,8 +820,8 @@ local function CreateGUI()
             
             local character = LocalPlayer.Character
             if character and currentTarget then
-                local rootPart = character:FindFirstChild("HumanoidRootPart")
-                local npcRoot = currentTarget:FindFirstChild("HumanoidRootPart")
+                local rootPart = GetCharacterRoot()
+                local npcRoot = GetNPCRoot(currentTarget)
                 if rootPart and npcRoot then
                     local dist = (rootPart.Position - npcRoot.Position).Magnitude
                     distDisplay.Text = "Dist: " .. math.floor(dist)
@@ -980,13 +829,10 @@ local function CreateGUI()
             end
             
             if isFarming then
-                if isHiding then
-                    status.Text = "🫥 HIDING (Low Health!)"
-                    status.TextColor3 = Color3.fromRGB(255, 50, 50)
-                elseif currentTarget then
+                if currentTarget then
                     local humanoid = currentTarget:FindFirstChildOfClass("Humanoid")
                     if humanoid then
-                        status.Text = "Targeting: " .. string.sub(currentTarget.Name, 1, 15) .. " (" .. math.floor(humanoid.Health) .. " HP)"
+                        status.Text = "🌀 Orbiting: " .. string.sub(currentTarget.Name, 1, 12) .. " (" .. math.floor(humanoid.Health) .. " HP)"
                         status.TextColor3 = Color3.fromRGB(100, 255, 100)
                     end
                 else
@@ -1005,7 +851,7 @@ end
 
 task.spawn(CreateGUI)
 
--- Hotkey to toggle (F2)
+-- Hotkeys
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
     
@@ -1035,10 +881,9 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
     end
 end)
 
-print("🌾 AUTO-FARM SYSTEM LOADED! (Full Dungeon Scanner)")
-print("📌 Scans ALL models in dungeon folder for NPCs")
-print("📌 Automatically moves to next room when cleared")
+print("🌀 AUTO-FARM SYSTEM LOADED! (Ultimate Fix)")
+print("📌 Uses simple CFrame movement (no tween errors)")
+print("📌 Proper character root detection")
+print("📌 Camera locks onto target")
 print("📌 Press F2 to toggle farming")
 print("📌 Press F3 to toggle weapon swing")
-print("❤️ Auto-hides when health < " .. config.hideHealthThreshold)
-print("📷 Camera automatically tracks targets")
