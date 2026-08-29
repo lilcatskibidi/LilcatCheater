@@ -1,9 +1,10 @@
 --[[
-    AUTO-FARM SYSTEM - TWEEN SMOOTHING & EVADER EDITION
-    - Lerp Smoothing: Uses frame-rate independent CFrame:Lerp for fluid Tween-like movement
-    - Dynamic Threat Evader: Smoothly glides away when skill/hitbox markers are detected
-    - Physics Anti-Fall: AssemblyLinearVelocity nulling + Physics state override
-    - Fully Retained: UI mounted to CoreGui, auto remote triggers, keybinds, full paste-in
+    AUTO-FARM SYSTEM - PURE NOCLIP ENGINE & SETTINGS UI ED. (V17)
+    - Pure Noclip Engine: Removed obstacle collision math. Glides effortlessly through walls.
+    - Live Settings UI: Adjust Hover, Orbit, Scan Radius, and Dodge Distance in real-time.
+    - Precision Threat Filter: Ignores passive particle emitters, ambient effects, and non-hazardous parts.
+    - Continuous Attack Protocol: Weapon swings, skills, and remotes continue firing uninterrupted.
+    - Fully Retained: UI in CoreGui, remote events, keybinds, full paste-in.
 ]]
 
 local Players = game:GetService("Players")
@@ -21,19 +22,19 @@ local abilityUsed = remotes and remotes:FindFirstChild("abilityUsed")
 local weaponUsed = remotes and remotes:FindFirstChild("weaponUsed")
 local changeStartValue = remotes and remotes:FindFirstChild("changeStartValue")
 
--- Auto-farm configuration
+-- Auto-farm configuration (Mutable via UI)
 local config = {
-    hoverHeight = 9,       -- Default hover height above NPC
-    orbitRadius = 4,       -- Base tight orbit radius
+    hoverHeight = 12,          
+    orbitRadius = 6,           
     checkInterval = 0.03,
     moveSpeed = 120,
-    rotationSpeed = 3.5,   -- Smooth orbital rotation speed
-    smoothness = 0.18,     -- Lerp factor (0.05 = super smooth/slow, 0.3 = fast tween)
+    rotationSpeed = 3.5,       
     wallNoclip = true,
     
-    -- Evasion Settings
-    scanRadius = 25,       -- Detection range around NPC for skills/projectiles
-    dodgeDistance = 12,    -- Distance to glide away when dynamic skill detected
+    scanRadius = 25,           
+    maxDodgeDistance = 14,     
+    undergroundDepth = 25,     
+    preventTargetDeath = true,
 }
 
 -- Spam configuration
@@ -54,7 +55,8 @@ local angle = 0
 local noclipConnection = nil
 local floatVelocity = nil
 local isDodging = false
-local dodgeOffset = Vector3.zero
+local targetHighlight = nil
+local currentEvasionStatusText = "Safe"
 
 -- Safe Character & Root Instance Detection
 local function GetPlayerControlInstance()
@@ -82,6 +84,33 @@ end
 local function GetNPCRoot(npc)
     if not npc or not npc:IsA("Model") or not npc.Parent then return nil end
     return npc:FindFirstChild("HumanoidRootPart") or npc.PrimaryPart or npc:FindFirstChildOfClass("BasePart")
+end
+
+-- Target Highlight Management
+local function UpdateTargetHighlight(npc)
+    if not npc or not npc.Parent then
+        if targetHighlight then
+            targetHighlight:Destroy()
+            targetHighlight = nil
+        end
+        return
+    end
+
+    if not targetHighlight or targetHighlight.Parent ~= npc then
+        if targetHighlight then targetHighlight:Destroy() end
+        targetHighlight = Instance.new("Highlight")
+        targetHighlight.Name = "AutoFarm_TargetHighlight"
+        targetHighlight.FillColor = Color3.fromRGB(255, 50, 50)
+        targetHighlight.OutlineColor = Color3.fromRGB(255, 255, 0)
+        targetHighlight.FillTransparency = 0.4
+        targetHighlight.OutlineTransparency = 0
+        targetHighlight.Parent = npc
+    end
+end
+
+-- Direct Target Positioning (No Wall Collisions/Raycast Friction)
+local function GetDirectPosition(intendedPos)
+    return intendedPos
 end
 
 -- NPC Search
@@ -127,6 +156,19 @@ local function GetAllNPCs()
     return npcs
 end
 
+-- Target Immortality Guard
+local function PreventTargetDeath(npc)
+    if not config.preventTargetDeath or not npc then return end
+    local humanoid = npc:FindFirstChildOfClass("Humanoid")
+    if humanoid and humanoid.Health <= 1 then
+        humanoid.Health = math.max(humanoid.Health, 10)
+    end
+    local healthVal = npc:FindFirstChild("Health") or npc:FindFirstChild("HP")
+    if healthVal and healthVal:IsA("ValueBase") and healthVal.Value <= 1 then
+        healthVal.Value = math.max(healthVal.Value, 10)
+    end
+end
+
 -- Nearest Target Detector
 local function FindNearestNPC()
     allNPCs = GetAllNPCs()
@@ -151,52 +193,124 @@ local function FindNearestNPC()
     return nearest
 end
 
--- Dynamic Skill / Threat Detector
-local function DetectIncomingThreat(npcRoot)
-    if not npcRoot then return false, Vector3.zero end
+-- STRICT REAL LETHAL HAZARD SCANNER
+local function GetActiveHazardData(primaryNPCRoot)
+    local _, playerRoot = GetPlayerControlInstance()
+    if not playerRoot then return false, {}, Vector3.zero end
     
-    local threatFound = false
-    local evadeDirection = Vector3.zero
-    local center = npcRoot.Position
+    local activeHazards = {}
+    local netEvadeDirection = Vector3.zero
+    local playerPos = playerRoot.Position
 
     local overlapParams = OverlapParams.new()
     overlapParams.FilterType = Enum.RaycastFilterType.Exclude
     if LocalPlayer.Character then
-        overlapParams.FilterDescendantsInstances = {LocalPlayer.Character, currentTarget}
+        overlapParams.FilterDescendantsInstances = {LocalPlayer.Character}
     end
 
-    local parts = Workspace:GetPartBoundsInRadius(center, config.scanRadius, overlapParams)
+    local parts = Workspace:GetPartBoundsInRadius(playerPos, config.scanRadius, overlapParams)
     
     for _, part in pairs(parts) do
+        local isThreat = false
         local nameLower = string.lower(part.Name)
         
-        local isWarningZone = string.find(nameLower, "redzone") or string.find(nameLower, "hitbox") or 
-                               string.find(nameLower, "aoe") or string.find(nameLower, "warning") or 
-                               string.find(nameLower, "skill") or string.find(nameLower, "indicator")
-        
-        local hasParticle = part:FindFirstChildOfClass("ParticleEmitter") ~= nil
-        local isProjectile = part.AssemblyLinearVelocity.Magnitude > 25
+        if currentTarget and part:IsDescendantOf(currentTarget) then continue end
 
-        if isWarningZone or isProjectile or (hasParticle and part.Size.Magnitude > 6) then
-            threatFound = true
-            local partPos = part.Position
-            local awayVector = (center - partPos)
-            if awayVector.Magnitude == 0 then
-                awayVector = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1))
+        local isExplicitWarning = string.find(nameLower, "redzone") or string.find(nameLower, "warningzone") or 
+                                  string.find(nameLower, "dangerzone") or string.find(nameLower, "aoe_indicator") or
+                                  string.find(nameLower, "explosionzone") or string.find(nameLower, "spell_aoe")
+
+        if isExplicitWarning then isThreat = true end
+
+        if not isThreat and part.AssemblyLinearVelocity.Magnitude > 25 then
+            if string.find(nameLower, "projectile") or string.find(nameLower, "spell") or string.find(nameLower, "bullet") or string.find(nameLower, "fireball") then
+                local projToPlayer = (playerPos - part.Position)
+                if projToPlayer.Magnitude < 20 and part.AssemblyLinearVelocity:Dot(projToPlayer.Unit) > 0 then
+                    isThreat = true
+                end
             end
-            evadeDirection = evadeDirection + awayVector.Unit
+        end
+
+        if not isThreat and part:FindFirstChildOfClass("TouchTransmitter") then
+            if string.find(nameLower, "hitbox") or string.find(nameLower, "damage") or string.find(nameLower, "hazard") or string.find(nameLower, "attack") then
+                isThreat = true
+            end
+        end
+
+        if isThreat then
+            local distToPlayer = (playerPos - part.Position).Magnitude
+            local hazardRadius = math.max(part.Size.X, part.Size.Y, part.Size.Z) / 2
+            if hazardRadius < 4 then hazardRadius = 4 end
+
+            if distToPlayer <= (hazardRadius + 3) then
+                table.insert(activeHazards, { position = part.Position, radius = hazardRadius + 2 })
+                local awayVector = (playerPos - part.Position)
+                if awayVector.Magnitude == 0 then awayVector = Vector3.new(math.random(-1, 1), 0, math.random(-1, 1)) end
+                netEvadeDirection = netEvadeDirection + awayVector.Unit
+            end
         end
     end
 
-    if threatFound then
-        if evadeDirection.Magnitude > 0 then
-            evadeDirection = evadeDirection.Unit
-        else
-            evadeDirection = Vector3.new(1, 0, 1).Unit
+    allNPCs = GetAllNPCs()
+    for _, npc in pairs(allNPCs) do
+        if npc == currentTarget then continue end
+        local npcRoot = GetNPCRoot(npc)
+        if npcRoot and (npcRoot.Position - playerPos).Magnitude <= 12 then
+            local busyCasting = npc:FindFirstChild("busyCasting") or npc:FindFirstChild("Casting") or npc:FindFirstChild("Attacking")
+            if busyCasting and (busyCasting.Value == true or busyCasting.Value == 1) then
+                table.insert(activeHazards, { position = npcRoot.Position, radius = 8 })
+                local awayVector = (playerPos - npcRoot.Position)
+                if awayVector.Magnitude > 0 then netEvadeDirection = netEvadeDirection + awayVector.Unit end
+            end
         end
     end
 
-    return threatFound, evadeDirection
+    local threatDetected = #activeHazards > 0
+    if threatDetected then
+        if netEvadeDirection.Magnitude > 0 then netEvadeDirection = netEvadeDirection.Unit
+        else netEvadeDirection = Vector3.new(1, 0, 1).Unit end
+    end
+
+    return threatDetected, activeHazards, netEvadeDirection
+end
+
+-- CALCULATE REAL-TIME SAFE POSITION IN ATTACK RANGE
+local function CalculateDynamicSafePosition(npcRoot, hazards, netEvadeDir)
+    local baseTargetPos = npcRoot.Position + Vector3.new(0, config.hoverHeight, 0)
+    local clearBasePos = GetDirectPosition(baseTargetPos)
+
+    local function IsPosInsideAnyHazard(pos)
+        for _, hazard in ipairs(hazards) do
+            local dist = (Vector3.new(pos.X, hazard.position.Y, pos.Z) - hazard.position).Magnitude
+            if dist <= hazard.radius then return true end
+        end
+        return false
+    end
+
+    if not IsPosInsideAnyHazard(clearBasePos) then return clearBasePos, "Clear Overhead" end
+
+    local searchRadii = {config.orbitRadius + 2, 8, 12, config.maxDodgeDistance}
+    local angleSteps = 12
+
+    for _, r in ipairs(searchRadii) do
+        for i = 1, angleSteps do
+            local testAngle = angle + (i * (math.pi * 2 / angleSteps))
+            local testPos = npcRoot.Position + Vector3.new(math.cos(testAngle) * r, config.hoverHeight, math.sin(testAngle) * r)
+            local clearTestPos = GetDirectPosition(testPos)
+
+            if not IsPosInsideAnyHazard(clearTestPos) then
+                return clearTestPos, "Tight Dynamic Dodge"
+            end
+        end
+    end
+
+    local thrustPos = clearBasePos + (netEvadeDir * config.maxDodgeDistance)
+    local clearThrustPos = GetDirectPosition(thrustPos)
+    if not IsPosInsideAnyHazard(clearThrustPos) then
+        return clearThrustPos, "Vector Shift"
+    end
+
+    return npcRoot.Position - Vector3.new(0, config.undergroundDepth, 0), "Subterranean Override"
 end
 
 -- Anti-Fall Engine
@@ -212,77 +326,57 @@ local function SetAntiFall(enabled)
             floatVelocity.Velocity = Vector3.zero
             floatVelocity.Parent = rootPart
         end
-        if humanoid then
-            humanoid:ChangeState(Enum.HumanoidStateType.Physics)
-        end
+        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.Physics) end
         rootPart.AssemblyLinearVelocity = Vector3.zero
         rootPart.AssemblyAngularVelocity = Vector3.zero
     else
-        if floatVelocity then
-            floatVelocity:Destroy()
-            floatVelocity = nil
-        end
-        if humanoid then
-            humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
-        end
+        if floatVelocity then floatVelocity:Destroy(); floatVelocity = nil end
+        if humanoid then humanoid:ChangeState(Enum.HumanoidStateType.GettingUp) end
     end
 end
 
--- Wall Noclip Loop
+-- Wall Noclip Loop (Always active during auto-farm)
 local function SetWallNoclip(enabled)
     if enabled then
         if not noclipConnection then
             noclipConnection = RunService.Stepped:Connect(function()
                 local character = LocalPlayer.Character
                 if not character then return end
-                
                 for _, part in pairs(character:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = false
-                    end
+                    if part:IsA("BasePart") then part.CanCollide = false end
                 end
             end)
         end
     else
-        if noclipConnection then
-            noclipConnection:Disconnect()
-            noclipConnection = nil
-        end
+        if noclipConnection then noclipConnection:Disconnect(); noclipConnection = nil end
     end
 end
 
--- Smooth Tween-Like Overhead Positioning & Dynamic Dodge Evader
+-- Direct Positioning Engine
 local function PositionOverhead(npcRoot)
-    local humanoid, rootPart = GetPlayerControlInstance()
+    local _, rootPart = GetPlayerControlInstance()
     if not rootPart or not npcRoot then return end
 
-    local threatDetected, evadeVector = DetectIncomingThreat(npcRoot)
-    isDodging = threatDetected
-
+    local threatDetected, hazards, evadeVector = GetActiveHazardData(npcRoot)
     angle = angle + (config.rotationSpeed * config.checkInterval)
-    local radius = config.orbitRadius
-    
-    if isDodging then
-        radius = config.orbitRadius + config.dodgeDistance
-        dodgeOffset = dodgeOffset:Lerp(evadeVector * config.dodgeDistance, 0.15)
+
+    if threatDetected then
+        isDodging = true
+        local safePos, bypassType = CalculateDynamicSafePosition(npcRoot, hazards, evadeVector)
+        currentEvasionStatusText = "DODGING: " .. bypassType
+        rootPart.CFrame = CFrame.lookAt(safePos, npcRoot.Position)
     else
-        dodgeOffset = dodgeOffset:Lerp(Vector3.zero, 0.1)
+        isDodging = false
+        
+        local offsetX = math.cos(angle) * config.orbitRadius
+        local offsetZ = math.sin(angle) * config.orbitRadius
+        local intendedPos = npcRoot.Position + Vector3.new(offsetX, config.hoverHeight, offsetZ)
+
+        currentEvasionStatusText = "Safe"
+        rootPart.CFrame = CFrame.lookAt(intendedPos, npcRoot.Position)
     end
 
-    local offsetX = math.cos(angle) * radius
-    local offsetZ = math.sin(angle) * radius
-    
-    local targetPos = npcRoot.Position + Vector3.new(offsetX, config.hoverHeight, offsetZ) + dodgeOffset
-    local lookTarget = npcRoot.Position
-
-    -- Smooth CFrame Lerp Interpolation (Creates the smooth Tween movement effect)
-    local desiredCFrame = CFrame.lookAt(targetPos, lookTarget)
-    rootPart.CFrame = rootPart.CFrame:Lerp(desiredCFrame, config.smoothness)
-    
-    if floatVelocity then
-        floatVelocity.Velocity = Vector3.zero
-    end
-    
+    if floatVelocity then floatVelocity.Velocity = Vector3.zero end
     rootPart.AssemblyLinearVelocity = Vector3.zero
     rootPart.AssemblyAngularVelocity = Vector3.zero
 end
@@ -301,10 +395,7 @@ local function FireWeaponSwing()
     local weapon = GetEquippedWeapon()
     if weapon then
         local swing = weapon:FindFirstChild("swing", true)
-        if swing and swing:IsA("RemoteEvent") then
-            swing:FireServer()
-            return true
-        end
+        if swing and swing:IsA("RemoteEvent") then swing:FireServer(); return true end
     end
     return false
 end
@@ -331,7 +422,6 @@ local function FireWeapon()
     if not LocalPlayer.Character or not weaponUsed then return false end
     local busyCasting = LocalPlayer.Character:FindFirstChild("busyCasting")
     if busyCasting and busyCasting.Value == true then return false end
-    
     for _, v in pairs(LocalPlayer.Character:GetChildren()) do
         if v:IsA("Accessory") and v:FindFirstChild("Weapon") then
             local remoteEvent = v:FindFirstChildOfClass("RemoteEvent")
@@ -354,10 +444,7 @@ local function StartSpam()
             if spamConfig.spamWeapon then FireWeapon() end
             if spamConfig.spamSwing then
                 swingTimer = swingTimer + spamConfig.delay
-                if swingTimer >= spamConfig.swingDelay then
-                    FireWeaponSwing()
-                    swingTimer = 0
-                end
+                if swingTimer >= spamConfig.swingDelay then FireWeaponSwing(); swingTimer = 0 end
             end
         end
         task.wait(spamConfig.delay)
@@ -370,9 +457,7 @@ local function UpdateCamera()
     local _, rootPart = GetPlayerControlInstance()
     local npcRoot = GetNPCRoot(currentTarget)
     if rootPart and npcRoot then
-        local targetPos = npcRoot.Position
-        local currentPos = rootPart.Position
-        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(currentPos, targetPos), 0.15)
+        Camera.CFrame = Camera.CFrame:Lerp(CFrame.lookAt(rootPart.Position, npcRoot.Position), 0.15)
     end
 end
 
@@ -386,6 +471,7 @@ local function FarmingLoop()
         if not humanoid or not rootPart then
             SetAntiFall(false)
             currentTarget = nil
+            UpdateTargetHighlight(nil)
             task.wait(0.5)
             continue
         end
@@ -395,9 +481,12 @@ local function FarmingLoop()
         if currentTarget then
             local npcRoot = GetNPCRoot(currentTarget)
             local npcHumanoid = currentTarget:FindFirstChildOfClass("Humanoid")
-            
-            if not npcRoot or (npcHumanoid and npcHumanoid.Health <= 0) or not currentTarget.Parent then
+            PreventTargetDeath(currentTarget)
+            UpdateTargetHighlight(currentTarget)
+
+            if not npcRoot or (npcHumanoid and npcHumanoid.Health <= 0 and not config.preventTargetDeath) or not currentTarget.Parent then
                 currentTarget = nil
+                UpdateTargetHighlight(nil)
                 task.wait(0.05)
                 continue
             end
@@ -406,15 +495,14 @@ local function FarmingLoop()
             PositionOverhead(npcRoot)
         else
             currentTarget = FindNearestNPC()
-            if not currentTarget then
-                task.wait(0.3)
-                continue
-            end
+            UpdateTargetHighlight(currentTarget)
+            if not currentTarget then task.wait(0.3); continue end
         end
 
         task.wait(config.checkInterval)
     end
     
+    UpdateTargetHighlight(nil)
     SetAntiFall(false)
     SetWallNoclip(false)
 end
@@ -432,6 +520,7 @@ end
 local function StopAutoFarm()
     isFarming = false
     currentTarget = nil
+    UpdateTargetHighlight(nil)
     SetAntiFall(false)
     SetWallNoclip(false)
 end
@@ -447,13 +536,11 @@ LocalPlayer.CharacterAdded:Connect(function(newChar)
         newChar:WaitForChild("Humanoid", 10)
         newChar:WaitForChild("HumanoidRootPart", 10)
         task.wait(0.5)
-        if isFarming then
-            SetAntiFall(true)
-        end
+        if isFarming then SetAntiFall(true) end
     end
 end)
 
--- CoreGui Mount with PlayerGui Fallback
+-- CORE GUI CREATION WITH SETTINGS PANEL
 local parentTarget = CoreGui:FindFirstChild("RobloxGui") or LocalPlayer:WaitForChild("PlayerGui")
 
 local function CreateGUI()
@@ -467,7 +554,7 @@ local function CreateGUI()
     gui.Parent = parentTarget
 
     local frame = Instance.new("Frame")
-    frame.Size = UDim2.new(0, 210, 0, 240)
+    frame.Size = UDim2.new(0, 240, 0, 360) 
     frame.Position = UDim2.new(0, 15, 0, 150)
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
     frame.BorderSizePixel = 0
@@ -479,10 +566,10 @@ local function CreateGUI()
     local title = Instance.new("TextLabel")
     title.Size = UDim2.new(1, 0, 0, 30)
     title.BackgroundTransparency = 1
-    title.Text = "⚡ AUTO-FARM V5 (TWEEN LERP)"
+    title.Text = "⚡ FARM V17 (PURE NOCLIP)"
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
     title.Font = Enum.Font.GothamBold
-    title.TextSize = 12
+    title.TextSize = 11
     title.Parent = frame
 
     local toggleBtn = Instance.new("TextButton")
@@ -502,46 +589,100 @@ local function CreateGUI()
         toggleBtn.BackgroundColor3 = isFarming and Color3.fromRGB(200, 50, 50) or Color3.fromRGB(40, 180, 80)
     end)
 
+    -- Status Labels
     local status = Instance.new("TextLabel")
-    status.Size = UDim2.new(0.9, 0, 0, 25)
-    status.Position = UDim2.new(0.05, 0, 0, 80)
+    status.Size = UDim2.new(0.9, 0, 0, 20)
+    status.Position = UDim2.new(0.05, 0, 0, 75)
     status.BackgroundTransparency = 1
     status.Text = "Status: Idle"
     status.TextColor3 = Color3.fromRGB(180, 180, 180)
     status.Font = Enum.Font.Gotham
-    status.TextSize = 12
+    status.TextSize = 11
     status.Parent = frame
 
     local dodgeStatus = Instance.new("TextLabel")
-    dodgeStatus.Size = UDim2.new(0.9, 0, 0, 25)
-    dodgeStatus.Position = UDim2.new(0.05, 0, 0, 105)
+    dodgeStatus.Size = UDim2.new(0.9, 0, 0, 20)
+    dodgeStatus.Position = UDim2.new(0.05, 0, 0, 95)
     dodgeStatus.BackgroundTransparency = 1
     dodgeStatus.Text = "Evasion: Safe"
     dodgeStatus.TextColor3 = Color3.fromRGB(100, 200, 255)
     dodgeStatus.Font = Enum.Font.Gotham
-    dodgeStatus.TextSize = 12
+    dodgeStatus.TextSize = 10
     dodgeStatus.Parent = frame
 
     local npcCount = Instance.new("TextLabel")
-    npcCount.Size = UDim2.new(0.9, 0, 0, 25)
-    npcCount.Position = UDim2.new(0.05, 0, 0, 130)
+    npcCount.Size = UDim2.new(0.9, 0, 0, 20)
+    npcCount.Position = UDim2.new(0.05, 0, 0, 115)
     npcCount.BackgroundTransparency = 1
     npcCount.Text = "Target NPCs: 0"
     npcCount.TextColor3 = Color3.fromRGB(180, 180, 180)
     npcCount.Font = Enum.Font.Gotham
-    npcCount.TextSize = 12
+    npcCount.TextSize = 11
     npcCount.Parent = frame
+    
+    -- Divider
+    local divider = Instance.new("Frame")
+    divider.Size = UDim2.new(0.9, 0, 0, 2)
+    divider.Position = UDim2.new(0.05, 0, 0, 145)
+    divider.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    divider.BorderSizePixel = 0
+    divider.Parent = frame
+
+    -- Settings Input Generator
+    local function CreateSettingRow(yOffset, labelText, configKey)
+        local row = Instance.new("Frame")
+        row.Size = UDim2.new(0.9, 0, 0, 30)
+        row.Position = UDim2.new(0.05, 0, 0, yOffset)
+        row.BackgroundTransparency = 1
+        row.Parent = frame
+
+        local label = Instance.new("TextLabel")
+        label.Size = UDim2.new(0.65, 0, 1, 0)
+        label.BackgroundTransparency = 1
+        label.Text = labelText
+        label.TextColor3 = Color3.fromRGB(200, 200, 200)
+        label.Font = Enum.Font.Gotham
+        label.TextSize = 11
+        label.TextXAlignment = Enum.TextXAlignment.Left
+        label.Parent = row
+
+        local input = Instance.new("TextBox")
+        input.Size = UDim2.new(0.35, 0, 0.8, 0)
+        input.Position = UDim2.new(0.65, 0, 0.1, 0)
+        input.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+        input.TextColor3 = Color3.fromRGB(255, 255, 255)
+        input.Font = Enum.Font.GothamBold
+        input.TextSize = 11
+        input.Text = tostring(config[configKey])
+        input.Parent = row
+        Instance.new("UICorner", input).CornerRadius = UDim.new(0, 4)
+
+        input.FocusLost:Connect(function()
+            local num = tonumber(input.Text)
+            if num then
+                config[configKey] = num
+            else
+                input.Text = tostring(config[configKey])
+            end
+        end)
+    end
+
+    CreateSettingRow(155, "Hover Height", "hoverHeight")
+    CreateSettingRow(190, "Orbit Radius", "orbitRadius")
+    CreateSettingRow(225, "Threat Scan Range", "scanRadius")
+    CreateSettingRow(260, "Max Dodge Dist.", "maxDodgeDistance")
+    CreateSettingRow(295, "Underground Depth", "undergroundDepth")
 
     task.spawn(function()
         while true do
+            if not parentTarget:FindFirstChild("AutoFarmGUI_Enhanced") then break end
             local found = GetAllNPCs()
             npcCount.Text = "Target NPCs: " .. #found
             
+            dodgeStatus.Text = "Evasion: " .. currentEvasionStatusText
             if isDodging then
-                dodgeStatus.Text = "Evasion: TWEEN DODGING!"
-                dodgeStatus.TextColor3 = Color3.fromRGB(255, 80, 80)
+                dodgeStatus.TextColor3 = Color3.fromRGB(255, 120, 0)
             else
-                dodgeStatus.Text = "Evasion: Safe"
                 dodgeStatus.TextColor3 = Color3.fromRGB(100, 200, 255)
             end
 
