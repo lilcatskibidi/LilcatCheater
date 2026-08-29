@@ -1,9 +1,6 @@
 --[[
-    AUTO-FARM SYSTEM - PURE NOCLIP ENGINE & SETTINGS UI ED. (V17)
-    - Pure Noclip Engine: Removed obstacle collision math. Glides effortlessly through walls.
-    - Live Settings UI: Adjust Hover, Orbit, Scan Radius, and Dodge Distance in real-time.
-    - Precision Threat Filter: Ignores passive particle emitters, ambient effects, and non-hazardous parts.
-    - Continuous Attack Protocol: Weapon swings, skills, and remotes continue firing uninterrupted.
+    AUTO-FARM SYSTEM - BILLBOARD STATE LOCK (V19)
+    - Billboard State Lock: Automatically detects parts/models with BillboardGui text containing specific states and locks the player in position above them until removed.
     - Fully Retained: UI in CoreGui, remote events, keybinds, full paste-in.
 ]]
 
@@ -25,14 +22,14 @@ local changeStartValue = remotes and remotes:FindFirstChild("changeStartValue")
 -- Auto-farm configuration (Mutable via UI)
 local config = {
     hoverHeight = 12,          
-    orbitRadius = 6,           
+    orbitRadius = 6,             
     checkInterval = 0.03,
     moveSpeed = 120,
     rotationSpeed = 3.5,       
     wallNoclip = true,
     
-    scanRadius = 25,           
-    maxDodgeDistance = 14,     
+    scanRadius = 25,             
+    maxDodgeDistance = 14,       
     undergroundDepth = 25,     
     preventTargetDeath = true,
 }
@@ -51,12 +48,12 @@ local spamConfig = {
 local currentTarget = nil
 local isFarming = false
 local allNPCs = {}
-local angle = 0
 local noclipConnection = nil
 local floatVelocity = nil
 local isDodging = false
 local targetHighlight = nil
 local currentEvasionStatusText = "Safe"
+local billboardLockTarget = nil
 
 -- Safe Character & Root Instance Detection
 local function GetPlayerControlInstance()
@@ -193,6 +190,54 @@ local function FindNearestNPC()
     return nearest
 end
 
+-- BILLBOARD GUI STATE SCANNER
+local function FindBillboardStateLockTarget()
+    -- If we already have a locked target, check if it's still valid/exists in Workspace
+    if billboardLockTarget then
+        if billboardLockTarget.Parent then
+            -- Verify if it still contains a BillboardGui with text
+            local foundValidGui = false
+            for _, desc in pairs(billboardLockTarget:GetDescendants()) do
+                if desc:IsA("BillboardGui") then
+                    for _, textObj in pairs(desc:GetDescendants()) do
+                        if (textObj:IsA("TextLabel") or textObj:IsA("TextButton")) and textObj.Text ~= "" then
+                            foundValidGui = true
+                            break
+                        end
+                    end
+                end
+                if foundValidGui then break end
+            end
+            if foundValidGui then
+                return billboardLockTarget -- Keep holding this lock!
+            end
+        end
+        -- Target expired or removed
+        billboardLockTarget = nil
+    end
+
+    -- Scan workspace for parts/models containing BillboardGui with active text state
+    for _, desc in pairs(Workspace:GetDescendants()) do
+        if desc:IsA("BillboardGui") and desc.Enabled then
+            local parentObject = desc.Parent
+            if parentObject then
+                for _, textObj in pairs(desc:GetDescendants()) do
+                    if (textObj:IsA("TextLabel") or textObj:IsA("TextButton")) and textObj.Text ~= "" then
+                        -- Check if it represents a state text
+                        local textLower = string.lower(textObj.Text)
+                        if string.find(textLower, "state") or string.find(textLower, "phase") or string.find(textLower, "status") or string.find(textLower, "boss") or string.find(textLower, "active") then
+                            billboardLockTarget = parentObject
+                            return parentObject
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
 -- STRICT REAL LETHAL HAZARD SCANNER
 local function GetActiveHazardData(primaryNPCRoot)
     local _, playerRoot = GetPlayerControlInstance()
@@ -217,8 +262,8 @@ local function GetActiveHazardData(primaryNPCRoot)
         if currentTarget and part:IsDescendantOf(currentTarget) then continue end
 
         local isExplicitWarning = string.find(nameLower, "redzone") or string.find(nameLower, "warningzone") or 
-                                  string.find(nameLower, "dangerzone") or string.find(nameLower, "aoe_indicator") or
-                                  string.find(nameLower, "explosionzone") or string.find(nameLower, "spell_aoe")
+                                string.find(nameLower, "dangerzone") or string.find(nameLower, "aoe_indicator") or
+                                string.find(nameLower, "explosionzone") or string.find(nameLower, "spell_aoe")
 
         if isExplicitWarning then isThreat = true end
 
@@ -274,7 +319,7 @@ local function GetActiveHazardData(primaryNPCRoot)
     return threatDetected, activeHazards, netEvadeDirection
 end
 
--- CALCULATE REAL-TIME SAFE POSITION IN ATTACK RANGE
+-- CALCULATE TELEPORT / OVERHEAD SAFE POSITION
 local function CalculateDynamicSafePosition(npcRoot, hazards, netEvadeDir)
     local baseTargetPos = npcRoot.Position + Vector3.new(0, config.hoverHeight, 0)
     local clearBasePos = GetDirectPosition(baseTargetPos)
@@ -289,17 +334,17 @@ local function CalculateDynamicSafePosition(npcRoot, hazards, netEvadeDir)
 
     if not IsPosInsideAnyHazard(clearBasePos) then return clearBasePos, "Clear Overhead" end
 
-    local searchRadii = {config.orbitRadius + 2, 8, 12, config.maxDodgeDistance}
-    local angleSteps = 12
+    local searchRadii = {6, 10, config.maxDodgeDistance}
+    local angleSteps = 8
 
     for _, r in ipairs(searchRadii) do
         for i = 1, angleSteps do
-            local testAngle = angle + (i * (math.pi * 2 / angleSteps))
+            local testAngle = i * (math.pi * 2 / angleSteps)
             local testPos = npcRoot.Position + Vector3.new(math.cos(testAngle) * r, config.hoverHeight, math.sin(testAngle) * r)
             local clearTestPos = GetDirectPosition(testPos)
 
             if not IsPosInsideAnyHazard(clearTestPos) then
-                return clearTestPos, "Tight Dynamic Dodge"
+                return clearTestPos, "Teleport Dodge Shift"
             end
         end
     end
@@ -307,7 +352,7 @@ local function CalculateDynamicSafePosition(npcRoot, hazards, netEvadeDir)
     local thrustPos = clearBasePos + (netEvadeDir * config.maxDodgeDistance)
     local clearThrustPos = GetDirectPosition(thrustPos)
     if not IsPosInsideAnyHazard(clearThrustPos) then
-        return clearThrustPos, "Vector Shift"
+        return clearThrustPos, "Vector Teleport"
     end
 
     return npcRoot.Position - Vector3.new(0, config.undergroundDepth, 0), "Subterranean Override"
@@ -352,13 +397,28 @@ local function SetWallNoclip(enabled)
     end
 end
 
--- Direct Positioning Engine
+-- Positioning Engine with Billboard State Priority
 local function PositionOverhead(npcRoot)
     local _, rootPart = GetPlayerControlInstance()
     if not rootPart or not npcRoot then return end
 
+    -- Check if a Billboard State Lock target is active
+    local lockTargetInstance = FindBillboardStateLockTarget()
+    if lockTargetInstance then
+        local lockRoot = GetNPCRoot(lockTargetInstance) or (lockTargetInstance:IsA("BasePart") and lockTargetInstance) or lockTargetInstance.PrimaryPart
+        if lockRoot then
+            currentEvasionStatusText = "BILLBOARD LOCK"
+            isDodging = false
+            local lockPos = lockRoot.Position + Vector3.new(0, config.hoverHeight, 0)
+            rootPart.CFrame = CFrame.lookAt(lockPos, lockRoot.Position)
+            if floatVelocity then floatVelocity.Velocity = Vector3.zero end
+            rootPart.AssemblyLinearVelocity = Vector3.zero
+            rootPart.AssemblyAngularVelocity = Vector3.zero
+            return
+        end
+    end
+
     local threatDetected, hazards, evadeVector = GetActiveHazardData(npcRoot)
-    angle = angle + (config.rotationSpeed * config.checkInterval)
 
     if threatDetected then
         isDodging = true
@@ -367,13 +427,9 @@ local function PositionOverhead(npcRoot)
         rootPart.CFrame = CFrame.lookAt(safePos, npcRoot.Position)
     else
         isDodging = false
-        
-        local offsetX = math.cos(angle) * config.orbitRadius
-        local offsetZ = math.sin(angle) * config.orbitRadius
-        local intendedPos = npcRoot.Position + Vector3.new(offsetX, config.hoverHeight, offsetZ)
-
+        local staticTargetPos = npcRoot.Position + Vector3.new(0, config.hoverHeight, 0)
         currentEvasionStatusText = "Safe"
-        rootPart.CFrame = CFrame.lookAt(intendedPos, npcRoot.Position)
+        rootPart.CFrame = CFrame.lookAt(staticTargetPos, npcRoot.Position)
     end
 
     if floatVelocity then floatVelocity.Velocity = Vector3.zero end
@@ -512,7 +568,7 @@ local function StartAutoFarm()
     if isFarming then return end
     isFarming = true
     currentTarget = nil
-    angle = 0
+    billboardLockTarget = nil
     task.spawn(StartSpam)
     task.spawn(FarmingLoop)
 end
@@ -520,6 +576,7 @@ end
 local function StopAutoFarm()
     isFarming = false
     currentTarget = nil
+    billboardLockTarget = nil
     UpdateTargetHighlight(nil)
     SetAntiFall(false)
     SetWallNoclip(false)
@@ -680,14 +737,19 @@ local function CreateGUI()
             npcCount.Text = "Target NPCs: " .. #found
             
             dodgeStatus.Text = "Evasion: " .. currentEvasionStatusText
-            if isDodging then
+            if currentEvasionStatusText == "BILLBOARD LOCK" then
+                dodgeStatus.TextColor3 = Color3.fromRGB(255, 50, 255)
+            elseif isDodging then
                 dodgeStatus.TextColor3 = Color3.fromRGB(255, 120, 0)
             else
                 dodgeStatus.TextColor3 = Color3.fromRGB(100, 200, 255)
             end
 
             if isFarming then
-                if currentTarget then
+                if billboardLockTarget then
+                    status.Text = "Locked: Billboard"
+                    status.TextColor3 = Color3.fromRGB(255, 100, 255)
+                elseif currentTarget then
                     status.Text = "Target: " .. string.sub(currentTarget.Name, 1, 14)
                     status.TextColor3 = Color3.fromRGB(80, 255, 120)
                 else
